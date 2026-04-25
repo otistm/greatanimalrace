@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Hide and Sneak Arcade</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            touch-action: none;
+            font-family: 'Press Start 2P', monospace;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 600px;
+            margin: 0 auto;
+            background: #0a0b10; /* Dark nursery */
+            box-shadow: 0 0 30px rgba(100, 50, 150, 0.15);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+        }
+
+        .scanlines {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.25) 50%,
+                rgba(0,0,0,0.25)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .crt-flicker {
+            animation: flicker 0.15s infinite;
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.95; }
+            50% { opacity: 1; }
+            100% { opacity: 0.95; }
+        }
+
+        .text-glow {
+            text-shadow: 2px 2px 0px #8e44ad, -1px -1px 0px #9b59b6;
+        }
+
+        .star { color: #555; font-size: 26px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.5); }
+            100% { transform: scale(1); }
+        }
+        
+        .alert-glow {
+            text-shadow: 3px 3px 0px #c0392b, -2px -2px 0px #e74c3c;
+            animation: pulse-red 0.5s infinite alternate;
+        }
+
+        @keyframes pulse-red {
+            from { transform: scale(1); }
+            to { transform: scale(1.1); }
+        }
+
+        /* 3-Way Control Zones for Mobile */
+        .controls-container {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 35%;
+            z-index: 20;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding: 10px;
+            pointer-events: none; /* Let child elements handle touches */
+        }
+
+        .touch-btn {
+            width: 70px;
+            height: 70px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 3px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 20px;
+            transition: all 0.1s;
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        
+        .touch-btn:active:not(.disabled), .touch-btn.active:not(.disabled) {
+            background: rgba(255, 255, 255, 0.5);
+            transform: scale(0.9);
+        }
+
+        .touch-btn.disabled {
+            opacity: 0.3;
+            pointer-events: none;
+            filter: grayscale(100%);
+        }
+
+        .action-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 10px;
+            background: rgba(46, 204, 113, 0.2);
+            border-color: rgba(46, 204, 113, 0.6);
+            color: rgba(46, 204, 113, 1);
+            font-size: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .action-btn:active, .action-btn.active {
+            background: rgba(46, 204, 113, 0.6);
+            color: white;
+        }
+
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+    <div id="game-container" class="crt-flicker">
+        <canvas id="gameCanvas"></canvas>
+        <div class="scanlines"></div>
+
+        <!-- HUD -->
+        <div id="hud" class="absolute top-0 left-0 w-full p-4 flex justify-between items-start z-20 text-white text-[10px] sm:text-xs tracking-wider pointer-events-none">
+            <button id="hud-exit-btn" class="absolute top-2 left-2 bg-red-500/80 hover:bg-red-600 text-white rounded-full w-8 h-8 flex items-center justify-center pointer-events-auto border-2 border-white font-bold z-[30] pb-1">&times;</button>
+            <div class="flex flex-col gap-3 w-1/2 ml-10">
+                <div>QUEST: <span id="quest-display" class="text-yellow-400">PAT BABY</span></div>
+                <div>SCORE: <span id="score-display" class="text-green-400">0</span></div>
+            </div>
+            <div class="flex flex-col gap-2 w-1/3 text-right items-end">
+                <div id="star-container" class="flex gap-1 mb-1">
+                    <span id="star-1" class="star">★</span>
+                    <span id="star-2" class="star">★</span>
+                    <span id="star-3" class="star">★</span>
+                </div>
+                <div>TIME: <span id="timer-display" class="text-green-400">0</span>s</div>
+                <div>QUESTS: <span id="level-display" class="text-white">0</span></div>
+            </div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 p-4 text-center">
+            <h1 class="text-3xl sm:text-4xl text-white mb-6 text-glow leading-loose">HIDE &<br>SNEAK</h1>
+            <p class="text-gray-300 text-[10px] sm:text-xs mb-8 leading-loose uppercase">
+                Tip-toe to complete quests.<br>
+                Don't make too much NOISE.<br>
+                If the baby looks, FREEZE!
+            </p>
+            <div class="flex flex-col gap-4">
+                <button id="start-btn" class="bg-purple-600 hover:bg-purple-500 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase animate-pulse cursor-pointer">
+                    Insert Coin
+                </button>
+                <button id="start-exit-btn" class="bg-transparent text-gray-300 hover:text-white border-2 border-gray-400 hover:border-white px-4 py-2 rounded text-xs uppercase cursor-pointer transition-colors">
+                    Back
+                </button>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="absolute inset-0 bg-red-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center">
+            <h1 class="text-4xl text-white mb-4 alert-glow">GAME OVER</h1>
+            <p id="fail-reason" class="text-white text-xs mb-4 uppercase">The baby saw you moving!</p>
+            <div id="final-stars-display" class="flex gap-2 mb-6">
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+                <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+            </div>
+            <p class="text-yellow-400 text-sm mb-8 font-bold">SCORE: <span id="final-score">0</span></p>
+            <div class="flex flex-col gap-4 w-full max-w-[200px] mx-auto">
+                <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
+                    Play Again
+                </button>
+                <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Next Level
+                </button>
+                <button id="gameover-exit-btn" class="bg-transparent text-gray-300 hover:text-white border-2 border-gray-400 hover:border-white px-4 py-2 rounded text-xs uppercase cursor-pointer transition-colors">
+                    Save & Exit
+                </button>
+            </div>
+        </div>
+        
+        <!-- Touch Controls -->
+        <div id="controls" class="controls-container hidden">
+            <div id="btn-left" class="touch-btn">&lt;</div>
+            <div id="btn-action" class="touch-btn action-btn">ACT</div>
+            <div id="btn-right" class="touch-btn">&gt;</div>
+        </div>
+    </div>
+
+    <script>
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Logical view resolution
+        const GAME_WIDTH = 400;
+        const GAME_HEIGHT = 700;
+        // The room is wider than the screen to allow side-scrolling
+        const ROOM_WIDTH = 650; 
+        
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // UI
+        const questEl = document.getElementById('quest-display');
+        const levelEl = document.getElementById('level-display');
+        const scoreEl = document.getElementById('score-display');
+        const timerEl = document.getElementById('timer-display');
+        const failReasonEl = document.getElementById('fail-reason');
+        
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const nextLevelScreen = document.getElementById('next-level-screen');
+        const controls = document.getElementById('controls');
+
+        // Input Nodes
+        const btnLeft = document.getElementById('btn-left');
+        const btnRight = document.getElementById('btn-right');
+        const btnAction = document.getElementById('btn-action');
+
+        // Input State
+        const keys = { left: false, right: false, action: false };
+        let isMoving = false;
+
+        // Game State
+        const urlParams = new URLSearchParams(window.location.search);
+        const GAME_ID = 'hide_and_seek';
+        // Per SCORING_GUIDE.md §6: clamp 1..5; reject 0/negative/non-numeric.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevelIndex = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
+        const questsRequired = currentLevelIndex; // 1 to 5
+
+        let gameState = 'START';
+        let questsCompleted = 0;
+        let score = 0;
+        let lastTime = 0;
+        let cameraX = 0;
+        let gameLoopRunning = false;
+        let resultPosted = false;
+
+        let timeElapsed = 0;
+        let earnedStars = 0;
+
+        // Track average baby wakefulness over the round (time-weighted).
+        let totalWakefulness = 0;
+        let totalDuration = 0;
+
+        let noiseLevel = 0; // 0 to 100
+        const NOISE_THRESHOLD = 70; // Noise above this wakes baby
+        
+        // Entities
+        const bunny = { x: 30, y: GAME_HEIGHT - 270, w: 40, h: 60, speed: 0.15, hasItem: false };
+        
+        const baby = { 
+            x: 250, y: GAME_HEIGHT - 260, w: 80, h: 50,
+            wakefulness: 0, // 0 to 100
+            state: 'SLEEPING', // SLEEPING, STIRRING, LOOKING
+            stateTimer: 0,
+            nextCheckTimer: 3000
+        };
+
+        let objective = { progress: 0, done: false, targetX: 0, targetType: '' };
+        let particles = []; // Zzzs
+
+        // Quests
+        const LEVELS = [
+            { id: 'pat', text: "PAT BABY TO SLEEP", target: "crib", targetX: 250, interactText: "PAT" },
+            { id: 'bottle', text: "RETRIEVE BOTTLE", target: "table", targetX: 520, interactText: "GRAB" },
+            { id: 'thermo', text: "TURN DOWN HEAT", target: "wall", targetX: 430, interactText: "ADJUST" },
+            { id: 'monitor', text: "RESET CAMERA", target: "table", targetX: 520, interactText: "RESET" }
+        ];
+        let currentLevel = null;
+
+        // --- Event Listeners ---
+        function setupButton(element, keyName) {
+            const start = (e) => { e.preventDefault(); e.stopPropagation(); keys[keyName] = true; element.classList.add('active'); };
+            const stop = (e) => { e.preventDefault(); e.stopPropagation(); keys[keyName] = false; element.classList.remove('active'); };
+            element.addEventListener('pointerdown', start);
+            element.addEventListener('pointerup', stop);
+            element.addEventListener('pointerleave', stop);
+            // Fallback
+            element.addEventListener('touchstart', start, {passive: false});
+            element.addEventListener('touchend', stop, {passive: false});
+        }
+
+        setupButton(btnLeft, 'left');
+        setupButton(btnRight, 'right');
+        setupButton(btnAction, 'action');
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') { keys.left = true; btnLeft.classList.add('active'); }
+            if (e.key === 'ArrowRight' || e.key === 'd') { keys.right = true; btnRight.classList.add('active'); }
+            if (e.key === ' ' || e.key === 'Enter' || e.key === 'e') { keys.action = true; btnAction.classList.add('active'); }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') { keys.left = false; btnLeft.classList.remove('active'); }
+            if (e.key === 'ArrowRight' || e.key === 'd') { keys.right = false; btnRight.classList.remove('active'); }
+            if (e.key === ' ' || e.key === 'Enter' || e.key === 'e') { keys.action = false; btnAction.classList.remove('active'); }
+        });
+
+        // Setup Exit buttons
+        const exitGame = () => {
+            gameLoopRunning = false;
+            // Navigation only — crediting (if any) already happened via LEVEL_RESULT.
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
+        };
+        document.getElementById('start-exit-btn').addEventListener('click', exitGame);
+        document.getElementById('hud-exit-btn').addEventListener('click', exitGame);
+        document.getElementById('gameover-exit-btn').addEventListener('click', exitGame);
+
+        document.getElementById('start-btn').addEventListener('click', () => initGame(true));
+        document.getElementById('restart-btn').addEventListener('click', () => initGame(true));
+
+        const nextLevelBtn = document.getElementById('next-level-btn');
+        if (nextLevelBtn) {
+            nextLevelBtn.addEventListener('click', () => {
+                // Navigation only.
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: currentLevelIndex }, '*');
+            });
+        }
+
+        function postLevelResult(finalScore, finalStars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
+            window.parent.postMessage({
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: currentLevelIndex,
+                stars: finalStars,
+                score: finalScore,
+                outcome
+            }, '*');
+        }
+
+        function avgWakefulness() {
+            return totalDuration > 0 ? totalWakefulness / totalDuration : 0;
+        }
+
+        function canonicalScore() {
+            // Per SCORING_GUIDE.md §3.
+            return questsCompleted * 100 + Math.max(0, 100 - Math.floor(avgWakefulness()));
+        }
+
+        // --- Logic ---
+        function initGame(resetAll) {
+            if (resetAll) {
+                questsCompleted = 0;
+                score = 0;
+                timeElapsed = 0;
+                earnedStars = 0;
+                resultPosted = false;
+                totalWakefulness = 0;
+                totalDuration = 0;
+                document.getElementById('star-1').className = 'star';
+                document.getElementById('star-2').className = 'star';
+                document.getElementById('star-3').className = 'star';
+            }
+
+            // Pick a random quest
+            let nextLevel = LEVELS[Math.floor(Math.random() * LEVELS.length)];
+            // Don't repeat the exact same quest back-to-back if possible
+            if (currentLevel && nextLevel.id === currentLevel.id && LEVELS.length > 1) {
+                nextLevel = LEVELS.find(l => l.id !== currentLevel.id);
+            }
+            currentLevel = nextLevel;
+
+            bunny.x = 30; // Start at door
+            bunny.hasItem = false;
+
+            baby.wakefulness = 0;
+            baby.state = 'SLEEPING';
+            // Increase frequency of lookouts as they get further
+            const difficultyScale = Math.max(0.3, 1 - (currentLevelIndex * 0.1) - (questsCompleted * 0.05));
+            baby.nextCheckTimer = (3000 + Math.random() * 3000) * difficultyScale;
+
+            noiseLevel = 0;
+            objective = { progress: 0, done: false, targetX: currentLevel.targetX, targetType: currentLevel.target };
+            particles = [];
+
+            updateUI();
+
+            gameState = 'PLAY';
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            controls.classList.remove('hidden');
+
+            lastTime = performance.now();
+            if (!gameLoopRunning) {
+                gameLoopRunning = true;
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function triggerGameOver(reason, stars = 0) {
+            gameState = 'GAMEOVER';
+            controls.classList.add('hidden');
+
+            const finalScore = canonicalScore();
+            score = finalScore;
+
+            failReasonEl.innerText = reason;
+            document.getElementById('final-score').innerText = finalScore;
+
+            const isWin = reason === "LEVEL CLEAR!";
+            document.getElementById('game-over-screen').querySelector('h1').innerText = isWin ? "LEVEL CLEAR!" : "GAME OVER";
+            document.getElementById('game-over-screen').querySelector('h1').className = isWin ? "text-4xl text-white mb-4 text-glow" : "text-4xl text-white mb-4 alert-glow";
+            gameOverScreen.classList.remove(isWin ? 'bg-red-900/90' : 'bg-purple-900/90');
+            gameOverScreen.classList.add(isWin ? 'bg-purple-900/90' : 'bg-red-900/90');
+
+            const finalStarsContainer = document.getElementById('final-stars-display');
+            if (finalStarsContainer) {
+                const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
+                finalStarSpans.forEach((star, index) => {
+                    if (index < stars) {
+                        star.classList.add('earned');
+                        star.classList.remove('empty');
+                    } else {
+                        star.classList.remove('earned');
+                        star.classList.add('empty');
+                    }
+                });
+            }
+
+            // Screen shake
+            document.getElementById('game-container').style.transform = 'translate(10px, 10px)';
+            setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(-10px, -10px)'; }, 50);
+            setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(0, 0)'; }, 100);
+
+            const nextLevelBtn = document.getElementById('next-level-btn');
+            if (nextLevelBtn) {
+                if (isWin && stars > 0 && currentLevelIndex < 5) {
+                    nextLevelBtn.classList.remove('hidden');
+                } else {
+                    nextLevelBtn.classList.add('hidden');
+                }
+            }
+
+            // Win → "Play Again"; fail → "Try Again".
+            const restartBtn = document.getElementById('restart-btn');
+            if (restartBtn) restartBtn.innerText = isWin ? 'Play Again' : 'Try Again';
+
+            gameOverScreen.classList.remove('hidden');
+
+            postLevelResult(finalScore, stars, isWin && stars > 0 ? 'win' : 'fail');
+        }
+
+        function spawnZzz() {
+            particles.push({
+                x: baby.x + baby.w/2 + (Math.random() * 20 - 10),
+                y: baby.y - 10,
+                life: 1.0,
+                char: 'Z'
+            });
+        }
+
+        function update(dt) {
+            if (gameState !== 'PLAY') return;
+
+            // Timer & Stars conditions
+            timeElapsed += dt;
+            // Time-weighted average wakefulness for the canonical score formula.
+            totalWakefulness += baby.wakefulness * dt;
+            totalDuration += dt;
+
+            // Live HUD preview only — final stars are computed at win/fail time.
+            // Per SCORING_GUIDE.md §2: 1★ = cleared, 2★ < 30s/quest avg, 3★ < 15s/quest avg.
+            // While playing we show the best tier the player is on track for.
+            let previewStars = 1;
+            if (timeElapsed < 15000 * questsRequired) previewStars = 3;
+            else if (timeElapsed < 30000 * questsRequired) previewStars = 2;
+
+            if (previewStars !== earnedStars) {
+                earnedStars = previewStars;
+                document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
+                document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
+                document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
+            }
+
+            // Movement logic
+            isMoving = false;
+            // Prevent movement if holding action to do a task
+            if (!keys.action || objective.done) {
+                if (keys.left) { bunny.x -= bunny.speed * dt; isMoving = true; }
+                if (keys.right) { bunny.x += bunny.speed * dt; isMoving = true; }
+            }
+            
+            // Bounds
+            if (bunny.x < 10) bunny.x = 10;
+            if (bunny.x > ROOM_WIDTH - bunny.w) bunny.x = ROOM_WIDTH - bunny.w;
+
+            // Camera follow
+            cameraX = bunny.x - GAME_WIDTH / 2;
+            if (cameraX < 0) cameraX = 0;
+            if (cameraX > ROOM_WIDTH - GAME_WIDTH) cameraX = ROOM_WIDTH - GAME_WIDTH;
+
+            // --- Stealth & Noise Mechanics ---
+            if (isMoving) {
+                noiseLevel += 0.05 * dt * (keys.action ? 0.3 : 1); // Action button lets you sneak quietly slowly?
+                if (keys.action) bunny.x += (bunny.speed * dt * -0.5); // Slow down if sneaking
+            } else {
+                noiseLevel -= 0.1 * dt;  // Standing still lowers noise
+            }
+            noiseLevel = Math.max(0, Math.min(100, noiseLevel));
+
+            if (noiseLevel > NOISE_THRESHOLD) {
+                baby.wakefulness += 0.02 * dt; // Too loud! Wakes baby up.
+            } else if (baby.state === 'SLEEPING') {
+                baby.wakefulness -= 0.005 * dt; // Slowly goes back to sleep
+            }
+            baby.wakefulness = Math.max(0, Math.min(100, baby.wakefulness));
+
+            // --- Baby State Machine (Red Light Green Light) ---
+            const difficultyScale = Math.max(0.3, 1 - (currentLevelIndex * 0.1) - (questsCompleted * 0.05));
+
+            if (baby.state === 'SLEEPING') {
+                baby.nextCheckTimer -= dt;
+                
+                // Spawn sleep particles
+                if (Math.random() < 0.02) spawnZzz();
+
+                if (baby.nextCheckTimer <= 0) {
+                    baby.state = 'STIRRING';
+                    baby.stateTimer = 1000 * difficultyScale; 
+                }
+            } 
+            else if (baby.state === 'STIRRING') {
+                baby.stateTimer -= dt;
+                if (baby.stateTimer <= 0) {
+                    baby.state = 'LOOKING';
+                    baby.stateTimer = (1500 + Math.random() * 1000); // Look around for 1.5-2.5s
+                }
+            }
+            else if (baby.state === 'LOOKING') {
+                baby.stateTimer -= dt;
+                
+                // The crucial check: If moving OR taking action while looking -> CAUGHT
+                if (isMoving || (keys.action && Math.abs((bunny.x + bunny.w/2) - (objective.targetX + 40)) < 70 && !objective.done)) {
+                    triggerGameOver("THE BABY SAW YOU!", 0);
+                    return;
+                }
+
+                if (baby.stateTimer <= 0) {
+                    baby.state = 'SLEEPING';
+                    // Base time until next check is lower if wakefulness is high
+                    baby.nextCheckTimer = (3000 + (100 - baby.wakefulness)*30 + Math.random()*2000) * difficultyScale;
+                }
+            }
+
+            if (baby.wakefulness >= 100) {
+                triggerGameOver("YOU WERE TOO NOISY!", 0);
+                return;
+            }
+
+            // --- Objective / Interaction Logic ---
+            const distToTarget = Math.abs((bunny.x + bunny.w/2) - (objective.targetX + 40)); 
+            const canInteract = distToTarget < 70 && !objective.done && baby.state !== 'LOOKING';
+
+            if (canInteract && keys.action) {
+                objective.progress += 0.1 * dt; // Takes about 1 second to complete
+                // Making noise while doing task!
+                noiseLevel += 0.03 * dt; 
+                
+                if (objective.progress >= 100) {
+                    objective.progress = 100;
+                    objective.done = true;
+                    if(currentLevel.id === 'bottle') bunny.hasItem = true;
+
+                    questsCompleted++;
+                    // Live HUD score from canonical formula (§3).
+                    score = canonicalScore();
+                    
+                    if (questsCompleted < questsRequired) {
+                        // Immediately start next quest
+                        bunny.hasItem = false;
+                        
+                        let nextLevel = LEVELS[Math.floor(Math.random() * LEVELS.length)];
+                        if (currentLevel && nextLevel.id === currentLevel.id && LEVELS.length > 1) {
+                            nextLevel = LEVELS.find(l => l.id !== currentLevel.id);
+                        }
+                        currentLevel = nextLevel;
+                        objective = { progress: 0, done: false, targetX: currentLevel.targetX, targetType: currentLevel.target };
+                    }
+                }
+            } else if (!objective.done) {
+                objective.progress = 0; // Reset if you let go
+            }
+
+            // --- Win Condition ---
+            if (questsCompleted >= questsRequired && bunny.x < 30) {
+                // Per SCORING_GUIDE.md §2: 1★ = cleared, 2★ < 30s/quest avg, 3★ < 15s/quest avg.
+                let finalStars = 1;
+                if (timeElapsed < 30000 * questsRequired) finalStars = 2;
+                if (timeElapsed < 15000 * questsRequired) finalStars = 3;
+
+                triggerGameOver("LEVEL CLEAR!", finalStars);
+                return;
+            }
+
+            // Update Zzzs
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.y -= 0.05 * dt;
+                p.x += Math.sin(p.y * 0.05) * 0.5;
+                p.life -= 0.001 * dt;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            updateUI();
+        }
+
+        function updateUI() {
+            if (objective.done) {
+                questEl.innerText = "EXIT THE ROOM!";
+                questEl.className = "text-green-400 animate-pulse";
+                btnAction.innerText = "-";
+                btnAction.classList.add("disabled");
+            } else {
+                questEl.innerText = currentLevel.text;
+                questEl.className = "text-yellow-400";
+                
+                if (currentLevel) {
+                    btnAction.innerText = currentLevel.interactText;
+                }
+                
+                const distToTarget = Math.abs((bunny.x + bunny.w/2) - (objective.targetX + 40));
+                const canInteract = distToTarget < 70 && baby.state !== 'LOOKING';
+                
+                if (canInteract) {
+                    btnAction.classList.remove("disabled");
+                } else {
+                    btnAction.classList.add("disabled");
+                }
+            }
+            levelEl.innerText = questsCompleted + "/" + questsRequired;
+            // Live canonical score (§3) — always reflects best-case if player finished now.
+            scoreEl.innerText = canonicalScore();
+            if (timerEl) timerEl.innerText = Math.floor(timeElapsed / 1000);
+        }
+
+        // --- Drawing ---
+        function drawRoom() {
+            // Background Wallpaper
+            ctx.fillStyle = '#0a0b10';
+            ctx.fillRect(0, 0, ROOM_WIDTH, GAME_HEIGHT);
+            
+            // Floor
+            ctx.fillStyle = '#110a18';
+            ctx.fillRect(0, GAME_HEIGHT - 220, ROOM_WIDTH, 220);
+            // Floorboard line
+            ctx.fillStyle = '#1a1025';
+            ctx.fillRect(0, GAME_HEIGHT - 220, ROOM_WIDTH, 3);
+
+            // Window with moonlight
+            ctx.fillStyle = '#1a2035';
+            ctx.fillRect(100, GAME_HEIGHT - 490, 100, 150); // Window frame inner
+            // Moon
+            ctx.fillStyle = '#f1c40f';
+            ctx.beginPath(); ctx.arc(130, GAME_HEIGHT - 460, 15, 0, Math.PI*2); ctx.fill();
+            // Window Bars
+            ctx.fillStyle = '#050508';
+            ctx.fillRect(145, GAME_HEIGHT - 490, 5, 150);
+            ctx.fillRect(100, GAME_HEIGHT - 415, 100, 5);
+
+            // Door (Left edge)
+            ctx.fillStyle = '#150d1a';
+            ctx.fillRect(0, GAME_HEIGHT - 440, 60, 220);
+            ctx.fillStyle = '#22152a';
+            ctx.fillRect(50, GAME_HEIGHT - 320, 5, 10); // doorknob
+
+            // Environment Objects based on level
+            if (!currentLevel) return;
+            
+            // Thermostat (Wall)
+            if (currentLevel.id === 'thermo') {
+                ctx.fillStyle = '#bdc3c7';
+                ctx.fillRect(currentLevel.targetX, GAME_HEIGHT - 360, 30, 40);
+                ctx.fillStyle = objective.done ? '#27ae60' : '#e74c3c'; // Turns green when done
+                ctx.fillRect(currentLevel.targetX + 5, GAME_HEIGHT - 355, 20, 15);
+            }
+
+            // Table for Toy / Router
+            ctx.fillStyle = '#3e2723';
+            ctx.fillRect(510, GAME_HEIGHT - 290, 70, 70); // Table legs
+            ctx.fillStyle = '#4e342e';
+            ctx.fillRect(500, GAME_HEIGHT - 300, 90, 10); // Table top
+
+            if (currentLevel.id === 'bottle' && !objective.done) {
+                // Baby Bottle
+                ctx.fillStyle = '#ecf0f1'; // white milk
+                ctx.fillRect(535, GAME_HEIGHT - 325, 16, 25);
+                ctx.fillStyle = '#f39c12'; // orange ring
+                ctx.fillRect(533, GAME_HEIGHT - 328, 20, 5);
+                ctx.fillStyle = '#f1c27d'; // nipple
+                ctx.beginPath(); ctx.arc(543, GAME_HEIGHT - 330, 5, 0, Math.PI); ctx.fill();
+            }
+
+            if (currentLevel.id === 'monitor') {
+                // Baby Monitor (Camera)
+                ctx.fillStyle = '#ecf0f1'; // white base
+                ctx.fillRect(535, GAME_HEIGHT - 315, 16, 15);
+                ctx.beginPath(); ctx.arc(543, GAME_HEIGHT - 320, 12, 0, Math.PI*2); ctx.fill(); // round camera head
+                ctx.fillStyle = '#2c3e50'; // lens
+                ctx.beginPath(); ctx.arc(543, GAME_HEIGHT - 320, 6, 0, Math.PI*2); ctx.fill();
+                
+                // Blinking red if broken, solid green if done
+                ctx.fillStyle = objective.done ? '#2ecc71' : (Math.floor(performance.now()/200)%2==0 ? '#e74c3c' : '#2c3e50');
+                ctx.beginPath(); ctx.arc(543, GAME_HEIGHT - 310, 2.5, 0, Math.PI*2); ctx.fill();
+            }
+        }
+
+        function drawCrib() {
+            const cx = 250;
+            const cy = GAME_HEIGHT - 290;
+            
+            // Crib Back
+            ctx.fillStyle = '#5c4033';
+            ctx.fillRect(cx, cy, 90, 70);
+            
+            // Blanket/Baby
+            ctx.fillStyle = '#3498db'; // Blue blanket
+            ctx.fillRect(cx + 10, cy + 50, 60, 20);
+            
+            // Baby Head
+            ctx.fillStyle = '#f1c27d';
+            ctx.beginPath(); ctx.arc(cx + 25, cy + 45, 12, 0, Math.PI*2); ctx.fill();
+            
+            // Baby State Details
+            if (baby.state === 'LOOKING') {
+                // Open eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(cx + 21, cy + 43, 3, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cx + 29, cy + 43, 3, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.beginPath(); ctx.arc(cx + 21, cy + 43, 1.5, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cx + 29, cy + 43, 1.5, 0, Math.PI*2); ctx.fill();
+            } else {
+                // Closed eyes
+                ctx.strokeStyle = '#8b4513';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(cx+18, cy+43); ctx.lineTo(cx+24, cy+43); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(cx+26, cy+43); ctx.lineTo(cx+32, cy+43); ctx.stroke();
+            }
+
+            // Crib Front Bars
+            ctx.fillStyle = '#8b5a2b';
+            ctx.fillRect(cx - 5, cy, 10, 70); // left post
+            ctx.fillRect(cx + 85, cy, 10, 70); // right post
+            ctx.fillRect(cx - 5, cy + 10, 100, 5); // top rail
+            ctx.fillRect(cx - 5, cy + 65, 100, 5); // bottom rail
+            
+            for(let i=1; i<8; i++) {
+                ctx.fillRect(cx + i*11 - 2, cy + 10, 4, 55); // vertical bars
+            }
+
+            // State Overlays
+            if (baby.state === 'STIRRING') {
+                ctx.fillStyle = '#e74c3c';
+                ctx.font = '50px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                // Jitter effect
+                let jx = Math.random()*4-2;
+                let jy = Math.random()*4-2;
+                ctx.fillText('!', cx + 45 + jx, cy - 15 + jy);
+            }
+            if (baby.state === 'LOOKING') {
+                // Scary red vignette over room
+                ctx.fillStyle = 'rgba(231, 76, 60, 0.15)';
+                ctx.fillRect(cameraX, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                // Two giant eyes above the crib
+                let jx = Math.random() * 2 - 1;
+                let jy = Math.random() * 2 - 1;
+                
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(cx + 15 + jx, cy - 50 + jy, 22, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cx + 75 + jx, cy - 50 + jy, 22, 0, Math.PI*2); ctx.fill();
+
+                let pupilOffset = (bunny.x < cx) ? -6 : 6;
+                ctx.fillStyle = '#000';
+                ctx.beginPath(); ctx.arc(cx + 15 + jx + pupilOffset, cy - 50 + jy, 10, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cx + 75 + jx + pupilOffset, cy - 50 + jy, 10, 0, Math.PI*2); ctx.fill();
+                
+                ctx.fillStyle = '#e74c3c';
+                ctx.beginPath(); ctx.arc(cx + 15 + jx + pupilOffset, cy - 50 + jy, 4, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cx + 75 + jx + pupilOffset, cy - 50 + jy, 4, 0, Math.PI*2); ctx.fill();
+            }
+        }
+
+        function drawBunny(x, y) {
+            const w = bunny.w;
+            const h = bunny.h;
+            const facing = (x < objective.targetX) ? 1 : -1; // +1 = right
+            const hop = isMoving ? Math.sin(performance.now() / 120) * 1.5 : 0;
+
+            // Layer 1: cotton-ball tail, peeking out behind the body on the
+            // side opposite of facing.
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(x + w*0.5 - facing * w*0.42, y + h*0.7, w*0.13, 0, Math.PI*2); ctx.fill();
+
+            // Layer 2: soft pink ellipse body (matches the round head).
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.5, y + h*0.72, w*0.42, h*0.27, 0, 0, Math.PI*2); ctx.fill();
+
+            // Layer 3: feet — alternating hop offsets when moving.
+            const footY = y + h*0.97;
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.32, footY - hop, w*0.14, h*0.05, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.68, footY + hop, w*0.14, h*0.05, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#ffd2e2';
+            ctx.beginPath(); ctx.ellipse(x + w*0.32, footY - hop, w*0.06, h*0.022, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.68, footY + hop, w*0.06, h*0.022, 0, 0, Math.PI*2); ctx.fill();
+
+            // --- Layer 4: circle-mascot head (matches swaddle-gami / bottle-rama) ---
+            const headCx = x + w*0.5;
+            const headCy = y + h*0.32;
+            const headR  = w*0.42;
+
+            // Ears - ellipses behind the head, gentle hop tilt while moving.
+            let earOffset = isMoving ? (Math.floor(performance.now()/150)%2)*3 : 0;
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(headCx - headR*0.55, headCy - headR*1.1 + earOffset, headR*0.32, headR*0.85, -0.2, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(headCx + headR*0.55, headCy - headR*1.1 - earOffset, headR*0.32, headR*0.85,  0.2, 0, Math.PI*2); ctx.fill();
+
+            // Head circle.
+            ctx.beginPath(); ctx.arc(headCx, headCy, headR, 0, Math.PI*2); ctx.fill();
+
+            // Eyes - small dark-red circles, biased toward the objective.
+            const eyeShift = facing * headR*0.12;
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx - headR*0.35 + eyeShift, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(headCx + headR*0.35 + eyeShift, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+
+            // White snout (muzzle), with the nose sitting at the top of it.
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.ellipse(headCx, headCy + headR*0.45, headR*0.32, headR*0.22, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx, headCy + headR*0.32, headR*0.13, 0, Math.PI*2); ctx.fill();
+
+            // Draw noise meter above bunny head
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 5, y - 20, 50, 8);
+            ctx.fillStyle = (noiseLevel > NOISE_THRESHOLD) ? '#e74c3c' : '#3498db';
+            ctx.fillRect(x - 4, y - 19, 48 * (noiseLevel / 100), 6);
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(x - 4 + 48 * (NOISE_THRESHOLD / 100), y - 20, 2, 8);
+            
+            // Item being carried
+            if (bunny.hasItem) {
+                // Holding the bottle
+                let holdX = (x < objective.targetX) ? x + w : x - 15;
+                ctx.fillStyle = '#ecf0f1'; // bottle body
+                ctx.fillRect(holdX, y + h*0.6, 10, 16);
+                ctx.fillStyle = '#f39c12'; // ring
+                ctx.fillRect(holdX - 1, y + h*0.6 - 2, 12, 3);
+                ctx.fillStyle = '#f1c27d'; // nipple
+                ctx.beginPath(); ctx.arc(holdX + 5, y + h*0.6 - 2, 3, 0, Math.PI); ctx.fill();
+            }
+        }
+
+        function drawInteractionUI() {
+            if (gameState !== 'PLAY' || objective.done) return;
+
+            const distToTarget = Math.abs((bunny.x + bunny.w/2) - (objective.targetX + 40));
+            if (distToTarget < 70 && baby.state !== 'LOOKING') {
+                
+                // Draw action prompt
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '10px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                
+                // Bobbing animation
+                let bobY = Math.sin(performance.now() / 200) * 5;
+                
+                ctx.fillText(`HOLD [${currentLevel.interactText}]`, objective.targetX + 40, GAME_HEIGHT - 400 + bobY);
+
+                // Draw Progress Bar
+                if (objective.progress > 0) {
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(objective.targetX + 15, GAME_HEIGHT - 375 + bobY, 50, 8);
+                    ctx.fillStyle = '#2ecc71';
+                    ctx.fillRect(objective.targetX + 16, GAME_HEIGHT - 374 + bobY, (objective.progress/100)*48, 6);
+                }
+            }
+        }
+
+        function draw() {
+            ctx.save();
+            ctx.translate(-cameraX, 0);
+
+            drawRoom();
+            drawCrib();
+            drawBunny(bunny.x, bunny.y);
+            drawInteractionUI();
+
+            // Draw Zzz particles
+            particles.forEach(p => {
+                ctx.fillStyle = `rgba(255, 255, 255, ${p.life})`;
+                ctx.font = '12px "Press Start 2P"';
+                ctx.fillText(p.char, p.x, p.y);
+            });
+
+            ctx.restore();
+        }
+
+        function gameLoop(timestamp) {
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+            if (dt > 100 || dt < 0 || isNaN(dt)) dt = 16; 
+
+            update(dt);
+            draw();
+
+            if (gameLoopRunning) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Boot
+        ctx.fillStyle = '#0a0b10';
+        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+        draw();
+
+        if (urlParams.get('autoStart') === 'true') {
+            initGame(true);
+        }
+
+    </script>
+</body>
+</html>

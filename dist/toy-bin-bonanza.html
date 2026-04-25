@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Retro Rabbit Arcade</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0a0a0a;
+            touch-action: none; /* Prevent zooming and scrolling on mobile */
+            font-family: 'Press Start 2P', monospace;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 600px; /* Limit width on tablets/desktops */
+            margin: 0 auto;
+            background: #111;
+            box-shadow: 0 0 30px rgba(255, 165, 0, 0.1);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated; /* Crisp edges for retro look */
+        }
+
+        /* Old school CRT Monitor Effects */
+        .scanlines {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.25) 50%,
+                rgba(0,0,0,0.25)
+            );
+            background-size: 100% 4px;
+            pointer-events: none; /* Allows clicks to pass through scanlines to buttons */
+            z-index: 10;
+        }
+
+        .crt-flicker {
+            animation: flicker 0.15s infinite;
+            /* Removed pointer-events: none from here so the container remains clickable! */
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.95; }
+            50% { opacity: 1; }
+            100% { opacity: 0.95; }
+        }
+
+        .text-glow {
+            text-shadow: 2px 2px 0px #d97700, -1px -1px 0px #ffea00;
+        }
+
+        /* Control Zones */
+        .touch-zone {
+            position: absolute;
+            bottom: 0;
+            width: 50%;
+            height: 40%; /* Large area for easy mobile tapping */
+            z-index: 20;
+            display: flex;
+            align-items: flex-end;
+            padding: 20px;
+            cursor: pointer;
+        }
+        
+        .touch-zone.left { left: 0; justify-content: flex-start; }
+        .touch-zone.right { right: 0; justify-content: flex-end; }
+
+        .control-btn {
+            width: 70px;
+            height: 70px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 3px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 24px;
+            transition: all 0.1s;
+        }
+        
+        .touch-zone:active .control-btn {
+            background: rgba(255, 255, 255, 0.5);
+            transform: scale(0.9);
+        }
+
+        .star { color: #555; font-size: 16px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.5); }
+            100% { transform: scale(1); }
+        }
+
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+    <div id="game-container" class="crt-flicker">
+        <!-- Canvas for rendering -->
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- CRT overlay -->
+        <div class="scanlines"></div>
+
+        <!-- Heads Up Display (HUD) -->
+        <div id="hud" class="absolute top-0 left-0 w-full p-4 flex justify-between items-start z-20 text-white text-xs sm:text-sm tracking-wider">
+            <button id="hud-exit-btn" class="absolute top-2 left-2 bg-red-500/80 hover:bg-red-600 text-white rounded-full w-8 h-8 flex items-center justify-center pointer-events-auto border-2 border-white font-bold z-[30] pb-1">&times;</button>
+            <div class="flex flex-col gap-2 pointer-events-none ml-10">
+                <div id="star-container" class="flex gap-1 mb-1">
+                    <span id="star-1" class="star">★</span>
+                    <span id="star-2" class="star">★</span>
+                    <span id="star-3" class="star">★</span>
+                </div>
+                <div>TIME: <span id="timer-display" class="text-white">30</span></div>
+                <div>SCORE: <span id="score-display" class="text-green-400">0</span></div>
+                <div class="flex gap-1" id="lives-display">
+                    <!-- Lives populated by JS -->
+                </div>
+            </div>
+            <div class="text-right text-gray-400 pointer-events-none">
+                HI:<br><span id="highscore-display" class="text-yellow-400">0</span>
+            </div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 p-4 text-center">
+            <h1 class="text-3xl sm:text-4xl text-white mb-8 text-glow leading-loose">TOY BIN<br>BONANZA</h1>
+            <p class="text-gray-300 text-xs mb-8 leading-loose uppercase">Move Left & Right<br>Catch the toys<br>Don't drop them!</p>
+            <div class="flex flex-col gap-4">
+                <button id="start-btn" class="bg-blue-500 hover:bg-blue-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase animate-pulse cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Insert Coin
+                </button>
+                <button id="start-exit-btn" class="bg-transparent text-gray-300 hover:text-white border-2 border-gray-400 hover:border-white px-4 py-2 rounded text-xs uppercase cursor-pointer transition-colors">
+                    Back
+                </button>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="absolute inset-0 bg-red-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center">
+            <h1 class="text-4xl text-white mb-4">TIME'S UP!</h1>
+            <div id="final-stars-display" class="flex gap-2 mb-6">
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+                <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+            </div>
+            <p class="text-white text-lg mb-2">SCORE: <span id="final-score" class="text-yellow-300 font-bold">0</span></p>
+            <p class="text-gray-300 text-sm mb-8">HIGH SCORE: <span id="final-highscore" class="font-bold">0</span></p>
+            <div class="flex flex-col gap-4 w-full max-w-[200px] mx-auto pointer-events-auto">
+                <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
+                    Play Again
+                </button>
+                <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Next Level
+                </button>
+                <button id="exit-btn" class="bg-transparent text-white hover:text-gray-300 border-2 border-white px-6 py-3 rounded text-xs uppercase cursor-pointer transition-all">
+                    Exit Game
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Controls (Invisible half-screen touch zones with visible visual buttons) -->
+        <div id="zone-left" class="touch-zone left hidden">
+            <div class="control-btn">&lt;</div>
+        </div>
+        <div id="zone-right" class="touch-zone right hidden">
+            <div class="control-btn">&gt;</div>
+        </div>
+    </div>
+
+    <script>
+        // --- Setup and Initialization ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Fixed internal resolution for consistent gameplay speed across devices
+        const GAME_WIDTH = 400;
+        const GAME_HEIGHT = 700;
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // UI Elements
+        const scoreEl = document.getElementById('score-display');
+        const timerEl = document.getElementById('timer-display');
+        const highScoreEl = document.getElementById('highscore-display');
+        const livesEl = document.getElementById('lives-display');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const finalScoreEl = document.getElementById('final-score');
+        const finalHighScoreEl = document.getElementById('final-highscore');
+        const zoneLeft = document.getElementById('zone-left');
+        const zoneRight = document.getElementById('zone-right');
+
+        // Game State Variables
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentLevelIndex = parseInt(urlParams.get('level')) || 1;
+        
+        const LEVEL_CONFIGS = [
+            { targetToys: 15, timeLimit: 30000 },
+            { targetToys: 20, timeLimit: 30000 },
+            { targetToys: 25, timeLimit: 40000 },
+            { targetToys: 30, timeLimit: 40000 },
+            { targetToys: 40, timeLimit: 45000 }
+        ];
+        const config = LEVEL_CONFIGS[Math.min(currentLevelIndex - 1, 4)];
+        
+        let gameState = 'START'; // START, PLAY, GAMEOVER
+        let score = 0;
+        let toysCaught = 0;
+        let toysDropped = 0;
+        let toysSpawned = 0;
+        let timeLeft = config.timeLimit;
+        let earnedStars = 3;
+        
+        // Safely load high score
+        let highScore = 0;
+        try {
+            highScore = localStorage.getItem('rabbitHighScore') || 0;
+        } catch (e) {
+            console.warn("Local storage unavailable.");
+        }
+        highScoreEl.innerText = highScore;
+        
+        let lastTime = 0;
+        let spawnTimer = 0;
+        let spawnInterval = 1500;
+        let toys = [];
+        let particles = [];
+        let shakeTimer = 0;
+        
+        // Input State
+        let movingLeft = false;
+        let movingRight = false;
+
+        // Entities
+        const rabbit = {
+            x: GAME_WIDTH / 2 - 25,
+            y: GAME_HEIGHT - 120, // Sit above the touch controls
+            width: 50,
+            height: 50,
+            speed: 0.45 // pixels per millisecond (slightly boosted for easier tracking)
+        };
+
+        // --- Event Listeners for Controls ---
+        
+        // Setup Touch / Mouse zones
+        function setupControl(element, isLeft) {
+            const startMove = (e) => { 
+                e.preventDefault(); 
+                if(isLeft) movingLeft = true; 
+                else movingRight = true; 
+            };
+            const stopMove = (e) => { 
+                e.preventDefault(); 
+                if(isLeft) movingLeft = false; 
+                else movingRight = false; 
+            };
+            
+            element.addEventListener('touchstart', startMove, {passive: false});
+            element.addEventListener('touchend', stopMove, {passive: false});
+            element.addEventListener('mousedown', startMove);
+            element.addEventListener('mouseup', stopMove);
+            element.addEventListener('mouseleave', stopMove);
+        }
+
+        setupControl(zoneLeft, true);
+        setupControl(zoneRight, false);
+
+        // Keyboard fallback
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') movingLeft = true;
+            if (e.key === 'ArrowRight' || e.key === 'd') movingRight = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') movingLeft = false;
+            if (e.key === 'ArrowRight' || e.key === 'd') movingRight = false;
+        });
+
+        // UI Buttons 
+        const startBtn = document.getElementById('start-btn');
+        const restartBtn = document.getElementById('restart-btn');
+        const exitBtn = document.getElementById('exit-btn');
+        const hudExitBtn = document.getElementById('hud-exit-btn');
+        const startExitBtn = document.getElementById('start-exit-btn');
+        const nextLvlBtn = document.getElementById('next-level-btn');
+
+        const exitGame = () => { 
+            gameState = 'GAMEOVER';
+            window.parent.postMessage({ type: 'EXIT_GAME', score: score }, '*');
+            score = 0;
+        };
+
+        // Simple click is best here now that the pointer barrier is gone
+        startBtn.addEventListener('click', () => { if (gameState !== 'PLAY') startGame(); });
+        restartBtn.addEventListener('click', () => { if (gameState !== 'PLAY') startGame(); });
+        exitBtn.addEventListener('click', exitGame);
+        hudExitBtn.addEventListener('click', exitGame);
+        startExitBtn.addEventListener('click', exitGame);
+        if (nextLvlBtn) {
+            nextLvlBtn.addEventListener('click', () => {
+                window.parent.postMessage({ type: 'NEXT_LEVEL', score: score, stars: earnedStars, level: currentLevelIndex }, '*');
+            });
+        }
+
+        // --- Drawing Functions ---
+
+        function drawRabbit(x, y, w, h) {
+            // Main body color changed to pink
+            ctx.fillStyle = '#FF99CC'; 
+            // Main body
+            ctx.fillRect(x + w*0.2, y + h*0.2, w*0.6, h*0.5);
+            
+            // Ears
+            ctx.fillRect(x + w*0.3, y - h*0.2, w*0.15, h*0.4);
+            ctx.fillRect(x + w*0.55, y - h*0.2, w*0.15, h*0.4);
+            
+            // Eyes
+            ctx.fillStyle = '#FF0055';
+            ctx.fillRect(x + w*0.35, y + h*0.3, w*0.1, w*0.1);
+            ctx.fillRect(x + w*0.55, y + h*0.3, w*0.1, w*0.1);
+            
+            // Nose color changed to a darker pink/red for contrast
+            ctx.fillStyle = '#CC3366';
+            ctx.fillRect(x + w*0.45, y + h*0.45, w*0.1, w*0.1);
+
+            // Toy Bin
+            ctx.fillStyle = '#8B5A2B'; // Brown bin
+            ctx.fillRect(x, y + h*0.6, w, h*0.4);
+            // Bin rim
+            ctx.fillStyle = '#6B4226';
+            ctx.fillRect(x - w*0.05, y + h*0.5, w*1.1, h*0.15);
+            // Arms holding bin
+            ctx.fillStyle = '#FF99CC';
+            ctx.fillRect(x - w*0.1, y + h*0.4, w*0.3, h*0.15);
+            ctx.fillRect(x + w*0.8, y + h*0.4, w*0.3, h*0.15);
+        }
+
+        function drawToy(x, y, w, h, type) {
+            ctx.save();
+            if (type === 0) {
+                // Letter Block
+                ctx.fillStyle = '#fef08a'; // yellow wooden block
+                ctx.fillRect(x, y, w, h);
+                ctx.strokeStyle = '#ca8a04';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, w, h);
+                // Inner bordered square
+                ctx.fillStyle = '#fde047';
+                ctx.fillRect(x + w*0.1, y + h*0.1, w*0.8, h*0.8);
+                // Letter
+                ctx.fillStyle = '#dc2626'; // red letter
+                ctx.font = `bold ${h*0.6}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                let letter = String.fromCharCode(65 + Math.floor(x) % 3); // A, B, or C
+                ctx.fillText(letter, x + w/2, y + h/2 + 2);
+            } else if (type === 1) {
+                // Beach Ball
+                ctx.beginPath();
+                ctx.arc(x + w/2, y + h/2, w/2, 0, Math.PI * 2);
+                ctx.clip(); // Clip to circle
+
+                ctx.fillStyle = '#ef4444'; // Red half
+                ctx.beginPath();
+                ctx.arc(x + w/2, y + h/2, w/2, Math.PI, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#3b82f6'; // Blue half
+                ctx.beginPath();
+                ctx.arc(x + w/2, y + h/2, w/2, 0, Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = '#facc15'; // Yellow stripe
+                ctx.beginPath();
+                ctx.ellipse(x + w/2, y + h/2, w*0.15, h/2, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#ffffff'; // White center
+                ctx.beginPath();
+                ctx.arc(x + w/2, y + h/2, w*0.15, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (type === 2) {
+                // Teddy Bear
+                ctx.fillStyle = '#8b5a2b'; // Brown
+                // Ears
+                ctx.beginPath();
+                ctx.arc(x + w*0.2, y + h*0.2, w*0.2, 0, Math.PI * 2);
+                ctx.arc(x + w*0.8, y + h*0.2, w*0.2, 0, Math.PI * 2);
+                ctx.fill();
+                // Head
+                ctx.beginPath();
+                ctx.arc(x + w/2, y + h*0.5, w*0.4, 0, Math.PI * 2);
+                ctx.fill();
+                // Snout
+                ctx.fillStyle = '#d2b48c'; // Tan
+                ctx.beginPath();
+                ctx.arc(x + w/2, y + h*0.6, w*0.2, 0, Math.PI * 2);
+                ctx.fill();
+                // Eyes & Nose
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(x + w*0.35, y + h*0.4, w*0.05, 0, Math.PI * 2);
+                ctx.arc(x + w*0.65, y + h*0.4, w*0.05, 0, Math.PI * 2);
+                ctx.arc(x + w*0.5, y + h*0.55, w*0.06, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (type === 3) {
+                // Book
+                ctx.translate(x + w/2, y + h/2);
+                ctx.rotate(15 * Math.PI / 180);
+                // Cover
+                ctx.fillStyle = '#1e40af'; // Dark blue cover
+                ctx.fillRect(-w/2, -h/2, w, h);
+                // Pages
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(-w/2 + w*0.2, -h/2 + h*0.05, w*0.8, h*0.9);
+                // Line detailing
+                ctx.fillStyle = '#9ca3af';
+                ctx.fillRect(-w/2 + w*0.3, -h/2 + h*0.2, w*0.5, h*0.05);
+                ctx.fillRect(-w/2 + w*0.3, -h/2 + h*0.4, w*0.5, h*0.05);
+                ctx.fillRect(-w/2 + w*0.3, -h/2 + h*0.6, w*0.5, h*0.05);
+            } else {
+                // Rubber Duck
+                ctx.fillStyle = '#facc15'; // Yellow
+                // Body
+                ctx.beginPath();
+                ctx.ellipse(x + w/2, y + h*0.7, w*0.4, h*0.25, 0, 0, Math.PI*2);
+                ctx.fill();
+                // Head
+                ctx.beginPath();
+                ctx.arc(x + w*0.7, y + h*0.4, w*0.25, 0, Math.PI * 2);
+                ctx.fill();
+                // Beak
+                ctx.fillStyle = '#ea580c'; // Orange
+                ctx.beginPath();
+                ctx.arc(x + w*0.95, y + h*0.5, w*0.1, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(x + w*0.75, y + h*0.35, w*0.04, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        let lastHudTime = -1;
+        let lastHudScore = -1;
+
+        function updateHUD() {
+            if (lastHudScore !== toysCaught) {
+                scoreEl.innerText = toysCaught + "/" + config.targetToys;
+                lastHudScore = toysCaught;
+            }
+
+            const timeSec = Math.ceil(timeLeft / 1000);
+            if (timerEl && lastHudTime !== timeSec) {
+                timerEl.innerText = timeSec;
+                lastHudTime = timeSec;
+            }
+            
+            let catchPercent = toysCaught / config.targetToys;
+            
+            let newStars = 0;
+            if (catchPercent >= 0.5) newStars = 1;
+            if (catchPercent >= 0.8) newStars = 2;
+            if (catchPercent >= 1.0) newStars = 3;
+            
+            if (newStars !== earnedStars) {
+                earnedStars = newStars;
+                document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
+                document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
+                document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
+            }
+
+            if (livesEl.innerHTML !== '') {
+                livesEl.innerHTML = '';
+            }
+        }
+
+        // --- Core Game Logic ---
+
+        function startGame() {
+            score = 0;
+            toysCaught = 0;
+            toysDropped = 0;
+            toysSpawned = 0;
+            timeLeft = config.timeLimit;
+            earnedStars = 3;
+            document.getElementById('star-1').className = 'star earned';
+            document.getElementById('star-2').className = 'star earned';
+            document.getElementById('star-3').className = 'star earned';
+            toys = [];
+            particles = [];
+            
+            lastHudTime = -1;
+            lastHudScore = -1;
+            
+            const timeForSpawning = config.timeLimit - 2000;
+            spawnInterval = timeForSpawning / config.targetToys;
+            spawnTimer = spawnInterval;
+            
+            rabbit.x = GAME_WIDTH / 2 - rabbit.width / 2;
+            movingLeft = false;
+            movingRight = false;
+            
+            gameState = 'PLAY';
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            zoneLeft.classList.remove('hidden');
+            zoneRight.classList.remove('hidden');
+            
+            updateHUD();
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function createParticles(x, y, color) {
+            for(let i=0; i<8; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 0.4,
+                    vy: (Math.random() - 0.5) * 0.4,
+                    life: 1.0,
+                    color: color
+                });
+            }
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+            zoneLeft.classList.add('hidden');
+            zoneRight.classList.add('hidden');
+            
+            if (score > highScore) {
+                highScore = score;
+                try {
+                    localStorage.setItem('rabbitHighScore', highScore);
+                } catch (e) {}
+            }
+            
+            finalScoreEl.innerText = toysCaught + "/" + config.targetToys;
+            finalHighScoreEl.innerText = highScore;
+            highScoreEl.innerText = highScore;
+
+            if (earnedStars > 0) {
+                document.getElementById('game-over-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
+            } else {
+                document.getElementById('game-over-screen').querySelector('h1').innerText = "GAME OVER";
+                document.getElementById('game-over-screen').querySelector('h1').className = "text-4xl text-white mb-4 alert-glow";
+            }
+
+            const finalStarsContainer = document.getElementById('final-stars-display');
+            if (finalStarsContainer) {
+                const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
+                finalStarSpans.forEach((star, index) => {
+                    if (index < earnedStars) {
+                        star.classList.add('earned');
+                        star.classList.remove('empty');
+                    } else {
+                        star.classList.remove('earned');
+                        star.classList.add('empty');
+                    }
+                });
+            }
+            
+            const nextLvlBtn = document.getElementById('next-level-btn');
+            if (nextLvlBtn) {
+                if (earnedStars > 0 && currentLevelIndex < 5) {
+                    nextLvlBtn.classList.remove('hidden');
+                } else {
+                    nextLvlBtn.classList.add('hidden');
+                }
+            }
+
+            gameOverScreen.classList.remove('hidden');
+            
+            // Send score to parent window
+            window.parent.postMessage({ type: 'GAME_OVER', score: score, stars: earnedStars }, '*');
+            score = 0;
+        }
+
+        function update(dt) {
+            if (gameState !== 'PLAY') return;
+
+            if (shakeTimer > 0) {
+                shakeTimer -= dt;
+            }
+
+            timeLeft -= dt;
+            updateHUD();
+            if (timeLeft <= 0) {
+                timeLeft = 0;
+                gameOver();
+                return;
+            }
+
+            // Move Rabbit
+            if (movingLeft) rabbit.x -= rabbit.speed * dt;
+            if (movingRight) rabbit.x += rabbit.speed * dt;
+            
+            // Screen boundaries
+            if (rabbit.x < 0) rabbit.x = 0;
+            if (rabbit.x + rabbit.width > GAME_WIDTH) rabbit.x = GAME_WIDTH - rabbit.width;
+
+            // Spawn Toys
+            spawnTimer -= dt;
+            if (spawnTimer <= 0 && toysSpawned < config.targetToys) {
+                toysSpawned++;
+                const toyWidth = 24;
+                const toyHeight = 24;
+                
+                let baseSpeed = 0.15 + (currentLevelIndex * 0.05);
+                let speedMod = baseSpeed + (toysSpawned / config.targetToys) * 0.1;
+
+                toys.push({
+                    x: Math.random() * (GAME_WIDTH - toyWidth),
+                    y: -toyHeight,
+                    width: toyWidth,
+                    height: toyHeight,
+                    type: Math.floor(Math.random() * 5), // 0: block, 1: ball, 2: bear, 3: book, 4: duck
+                    speed: speedMod
+                });
+                
+                spawnTimer = spawnInterval;
+            }
+
+            // Update Toys & Collisions
+            for (let i = toys.length - 1; i >= 0; i--) {
+                let c = toys[i];
+                c.y += c.speed * dt;
+
+                if (
+                    c.x < rabbit.x + rabbit.width &&
+                    c.x + c.width > rabbit.x &&
+                    c.y < rabbit.y + rabbit.height &&
+                    c.y + c.height > rabbit.y
+                ) {
+                    toysCaught++;
+                    score += 10;
+                    updateHUD();
+                    const colors = ['#fde047', '#ef4444', '#8b5a2b', '#1e40af', '#facc15'];
+                    createParticles(c.x + c.width/2, c.y + c.height/2, colors[c.type]);
+                    toys.splice(i, 1);
+                } 
+                else if (c.y > GAME_HEIGHT) {
+                    toysDropped++;
+                    updateHUD();
+                    
+                    shakeTimer = 100; // 100ms camera shake
+
+                    toys.splice(i, 1);
+                }
+            }
+
+            // Update Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.life -= 0.002 * dt;
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function draw() {
+            ctx.save();
+            if (shakeTimer > 0) {
+                const shakeX = (Math.random() - 0.5) * 10;
+                const shakeY = (Math.random() - 0.5) * 10;
+                ctx.translate(shakeX, shakeY);
+            }
+
+            ctx.fillStyle = '#111111';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            if (gameState === 'START') {
+                ctx.restore();
+                return;
+            }
+
+            drawRabbit(rabbit.x, rabbit.y, rabbit.width, rabbit.height);
+
+            toys.forEach(c => {
+                drawToy(c.x, c.y, c.width, c.height, c.type);
+            });
+
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life;
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), 4, 4); 
+            });
+            ctx.globalAlpha = 1.0;
+            ctx.restore();
+        }
+
+        function gameLoop(timestamp) {
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+
+            if (dt > 100) dt = 16; 
+
+            update(dt);
+            draw();
+
+            if (gameState === 'PLAY') {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        draw();
+        updateHUD();
+
+        if (urlParams.get('autoStart') === 'true') {
+            startGame();
+        }
+
+    </script>
+</body>
+</html>

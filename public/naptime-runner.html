@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Naptime Runner Arcade</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            touch-action: none;
+            font-family: 'Press Start 2P', monospace;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 600px;
+            margin: 0 auto;
+            background: #87CEEB; /* Daytime sky */
+            box-shadow: 0 0 30px rgba(50, 150, 255, 0.15);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+        }
+
+        .scanlines {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.25) 50%,
+                rgba(0,0,0,0.25)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .crt-flicker {
+            animation: flicker 0.15s infinite;
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.95; }
+            50% { opacity: 1; }
+            100% { opacity: 0.95; }
+        }
+
+        .text-glow {
+            text-shadow: 2px 2px 0px #2980b9, -1px -1px 0px #3498db;
+        }
+
+        .alert-glow {
+            text-shadow: 3px 3px 0px #c0392b, -2px -2px 0px #e74c3c;
+            animation: pulse-red 0.5s infinite alternate;
+        }
+
+        /* Drop shadow for HUD text so it stays legible on the bright daytime sky. */
+        .hud-shadow {
+            text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+        }
+
+        .star { color: #555; font-size: 26px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
+        @keyframes pop {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.4); }
+        }
+
+        @keyframes pulse-red {
+            from { transform: scale(1); }
+            to { transform: scale(1.1); }
+        }
+
+        #touch-surface {
+            position: absolute;
+            inset: 0;
+            z-index: 20;
+            cursor: pointer;
+        }
+
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+    <div id="game-container" class="crt-flicker">
+        <canvas id="gameCanvas"></canvas>
+        <div class="scanlines"></div>
+        <div id="touch-surface"></div>
+
+        <!-- HUD -->
+        <div id="hud" class="absolute top-0 left-0 w-full p-4 flex flex-col gap-2 z-10 text-white text-[10px] sm:text-xs tracking-wider pointer-events-none hud-shadow">
+            <button id="hud-exit-btn" class="absolute top-2 left-2 bg-red-500/80 hover:bg-red-600 text-white rounded-full w-8 h-8 flex items-center justify-center pointer-events-auto border-2 border-white font-bold z-[30] pb-1">&times;</button>
+            <div class="flex justify-between items-start">
+                <div class="flex flex-col gap-2 ml-10">
+                    <div>DISTANCE: <span id="score-display" class="text-yellow-400">0</span>m</div>
+                    <div>LEVEL: <span id="level-display" class="text-cyan-300">1</span></div>
+                </div>
+                <div class="text-right flex flex-col gap-2">
+                    <div id="star-container" class="flex gap-1 justify-end mb-1">
+                        <span id="star-1" class="star">★</span>
+                        <span id="star-2" class="star">★</span>
+                        <span id="star-3" class="star">★</span>
+                    </div>
+                    <div class="text-lg" id="timer-container">
+                        NAP IN:<br><span id="timer-display" class="text-green-400 text-xl">30.0</span>s
+                    </div>
+                </div>
+            </div>
+            <!-- Progress Bar -->
+            <div class="w-full h-4 border-2 border-white bg-black relative flex items-center mt-1">
+                <div id="progress-fill" class="h-full bg-blue-500 transition-all duration-75 ease-linear" style="width: 0%"></div>
+                <div class="absolute left-1 text-xs">🐇</div>
+                <div class="absolute right-1 text-xs text-white">🏠</div>
+            </div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 p-4 text-center pointer-events-none">
+            <h1 class="text-3xl sm:text-4xl text-white mb-6 text-glow leading-loose">NAPTIME<br>RUNNER</h1>
+            <p class="text-gray-300 text-[10px] sm:text-xs mb-8 leading-loose uppercase">
+                Tap anywhere to JUMP.<br>
+                Grab clocks to add time.<br>
+                Get home before the timer runs out!
+            </p>
+            <button id="start-btn" class="bg-blue-600 hover:bg-blue-500 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase animate-pulse cursor-pointer shadow-[4px_4px_0_0_#fff] pointer-events-auto active:shadow-none active:translate-y-1 transition-all">
+                Insert Coin
+            </button>
+        </div>
+
+        <!-- Results Screen (shared for win + fail, consistent with the other minigames) -->
+        <div id="game-over-screen" class="absolute inset-0 bg-red-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center">
+            <h1 id="game-over-title" class="text-4xl text-white mb-4 alert-glow">MELTDOWN!</h1>
+            <p id="game-over-reason" class="text-white text-xs mb-6 uppercase tracking-wider">You missed naptime!</p>
+            <div id="final-stars-display" class="flex gap-2 mb-6">
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+                <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+            </div>
+            <p class="text-white text-sm mb-6 font-bold">SCORE: <span id="final-score" class="text-yellow-300">0</span></p>
+            <div class="flex flex-col gap-4 w-full max-w-[220px] mx-auto">
+                <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
+                    Play Again
+                </button>
+                <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Next Level
+                </button>
+                <button id="exit-btn" class="bg-transparent text-gray-300 hover:text-white border-2 border-gray-400 hover:border-white px-4 py-2 rounded text-xs uppercase cursor-pointer transition-colors">
+                    Save &amp; Exit
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const touchSurface = document.getElementById('touch-surface');
+        
+        const GAME_WIDTH = 400;
+        const GAME_HEIGHT = 700;
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        const GROUND_Y = GAME_HEIGHT - 120;
+
+        // UI Elements
+        const scoreEl = document.getElementById('score-display');
+        const levelEl = document.getElementById('level-display');
+        const timerEl = document.getElementById('timer-display');
+        const timerContainer = document.getElementById('timer-container');
+        const progressFill = document.getElementById('progress-fill');
+        
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const gameOverTitleEl = document.getElementById('game-over-title');
+        const gameOverReasonEl = document.getElementById('game-over-reason');
+        const finalStarsContainerEl = document.getElementById('final-stars-display');
+        const finalScoreEl = document.getElementById('final-score');
+        const nextLevelBtn = document.getElementById('next-level-btn');
+        const restartBtn = document.getElementById('restart-btn');
+
+        // Game State Variables
+        const urlParams = new URLSearchParams(window.location.search);
+        const GAME_ID = 'naptime_runner';
+        // Per SCORING_GUIDE.md §6: clamp 1..5; reject 0/negative/non-numeric.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevelIndex = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
+
+        let gameState = 'START';
+        const level = currentLevelIndex;
+        let targetDistance = 8000 + (level - 1) * 2000;
+
+        let distance = 0;
+        let timeLeft = 30000; // ms
+        let lastTime = 0;
+        let baseGameSpeed = 0.35 + (level - 1) * 0.05;
+        let gameSpeed = 0.35; // Pixels per ms
+        let earnedStars = 0;
+        let resultPosted = false;
+
+        // Surface the actual level in the HUD before the first start.
+        levelEl.innerText = level;
+        
+        let obstacles = [];
+        let clocks = [];
+        let particles = [];
+        let floatTexts = []; // Floating +3s / -5s text
+        
+        let spawnTimer = 0;
+        let cityOffset1 = 0; // Back buildings
+        let roadOffset = 0;
+        let cloudOffset = 0; // Moving clouds
+        
+        let foregroundScenery = []; // Dynamic neighborhood scenery
+        
+        const bunny = {
+            x: 50,
+            y: GROUND_Y,
+            width: 40,
+            height: 55,
+            vy: 0,
+            gravity: 0.0022,
+            jumpStrength: 0.85,
+            isGrounded: true,
+            invincibleTimer: 0
+        };
+
+        const STROLLER_W = 45;
+        const STROLLER_H = 40;
+
+        // --- Input Handling ---
+        function handleJump(e) {
+            if (e) e.preventDefault();
+            
+            if (gameState === 'START') {
+                startGame();
+            } else if (gameState === 'PLAY') {
+                if (bunny.isGrounded) {
+                    bunny.vy = -bunny.jumpStrength;
+                    bunny.isGrounded = false;
+                    createParticles(bunny.x + bunny.width/2, GROUND_Y, '#ffffff', 5);
+                }
+            } else if (gameState === 'GAMEOVER') {
+                // Prevent immediate restart on death tap
+                if (performance.now() - lastTime > 1000) startGame();
+            }
+        }
+
+        touchSurface.addEventListener('touchstart', handleJump, {passive: false});
+        touchSurface.addEventListener('mousedown', handleJump);
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+                handleJump(e);
+            }
+        });
+
+        document.getElementById('start-btn').addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+        document.getElementById('restart-btn').addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+
+        document.getElementById('exit-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Navigation only — crediting (if any) already happened on LEVEL_RESULT.
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
+        });
+
+        document.getElementById('hud-exit-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Mid-round quit: no LEVEL_RESULT credited (player abandoned the run).
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
+        });
+
+        nextLevelBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (level >= 5) {
+                window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
+            } else {
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: level }, '*');
+            }
+        });
+
+        function postLevelResult(finalScore, finalStars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
+            window.parent.postMessage({
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: level,
+                stars: finalStars,
+                score: finalScore,
+                outcome
+            }, '*');
+        }
+
+        // --- Logic Functions ---
+
+        function initScenery() {
+            foregroundScenery = [];
+            let currentX = 0;
+            while(currentX < GAME_WIDTH + 800) {
+                currentX = addScenery(currentX);
+            }
+        }
+
+        function addScenery(startX) {
+            const types = ['building', 'building', 'shop', 'house', 'park'];
+            const type = types[Math.floor(Math.random() * types.length)];
+            let w = 100 + Math.random() * 100;
+            
+            if(type === 'house') w = 100 + Math.random() * 50;
+            if(type === 'park') w = 150 + Math.random() * 100;
+            if(type === 'shop') w = 120 + Math.random() * 60;
+
+            foregroundScenery.push({ type, x: startX, w, seed: Math.random() });
+            return startX + w + 10; // 10px gap between properties
+        }
+
+        function startGame() {
+            // The level is fixed by ?level= per SCORING_GUIDE.md §6; the parent
+            // reloads the iframe with a new ?level= when the player advances.
+            targetDistance = 8000 + (level - 1) * 2000;
+            baseGameSpeed = 0.35 + (level - 1) * 0.05;
+
+            distance = 0;
+            // Per-level extra time (5s/level) is intentional and documented in SCORING_GUIDE.md.
+            timeLeft = 30000 + (level - 1) * 5000;
+            gameSpeed = baseGameSpeed;
+
+            earnedStars = 0;
+            resultPosted = false;
+            document.getElementById('star-1').className = 'star';
+            document.getElementById('star-2').className = 'star';
+            document.getElementById('star-3').className = 'star';
+
+            obstacles = [];
+            clocks = [];
+            particles = [];
+            floatTexts = [];
+
+            bunny.y = GROUND_Y;
+            bunny.vy = 0;
+            bunny.isGrounded = true;
+            bunny.invincibleTimer = 0;
+
+            initScenery();
+            spawnTimer = 1000;
+
+            gameState = 'PLAY';
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+
+            levelEl.innerText = level;
+
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Render the shared results screen. Used by both win and fail so the layout
+        // (stars row, score, Try Again / Next Level / Save & Exit) stays consistent
+        // with every other minigame.
+        function showResultsScreen({ stars, score, isWin }) {
+            if (isWin) {
+                gameOverScreen.classList.remove('bg-red-900/90');
+                gameOverScreen.classList.add('bg-purple-900/90');
+                gameOverTitleEl.innerText = 'SAFE!';
+                gameOverTitleEl.classList.remove('alert-glow');
+                gameOverTitleEl.classList.add('text-glow');
+                gameOverReasonEl.innerText = 'You made it home for naptime!';
+                if (level >= 5) {
+                    nextLevelBtn.innerText = 'Finish';
+                } else {
+                    nextLevelBtn.innerText = 'Next Level';
+                }
+                nextLevelBtn.classList.remove('hidden');
+            } else {
+                gameOverScreen.classList.remove('bg-purple-900/90');
+                gameOverScreen.classList.add('bg-red-900/90');
+                gameOverTitleEl.innerText = 'MELTDOWN!';
+                gameOverTitleEl.classList.remove('text-glow');
+                gameOverTitleEl.classList.add('alert-glow');
+                gameOverReasonEl.innerText = 'You missed naptime!';
+                nextLevelBtn.classList.add('hidden');
+            }
+
+            // Win → "Play Again" (replay for a higher star count); fail → "Try Again".
+            restartBtn.innerText = isWin ? 'Play Again' : 'Try Again';
+
+            finalScoreEl.innerText = score;
+
+            const finalStarSpans = finalStarsContainerEl.querySelectorAll('.star');
+            finalStarSpans.forEach((star, index) => {
+                if (index < stars) {
+                    star.classList.add('earned');
+                    star.classList.remove('empty');
+                } else {
+                    star.classList.remove('earned');
+                    star.classList.add('empty');
+                }
+            });
+
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        function levelComplete() {
+            gameState = 'LEVEL_COMPLETE';
+
+            // Canonical score per SCORING_GUIDE.md §3 = floor(distance/10) for THIS run only.
+            const runScore = Math.floor(distance / 10);
+
+            // Recompute final stars from final timeLeft with strict > thresholds (§2).
+            let finalStars = 1;
+            if (timeLeft > 10000) finalStars = 2;
+            if (timeLeft > 20000) finalStars = 3;
+            earnedStars = finalStars;
+
+            showResultsScreen({ stars: finalStars, score: runScore, isWin: true });
+            lastTime = performance.now();
+            postLevelResult(runScore, finalStars, 'win');
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+
+            // Per SCORING_GUIDE.md §3, score is per-run distance/10. A failed run
+            // still surfaces the partial distance so the player sees their progress.
+            const runScore = Math.floor(distance / 10);
+
+            // Camera shake
+            document.getElementById('game-container').style.transform = 'translate(10px, 10px)';
+            setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(-10px, -10px)'; }, 50);
+            setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(0, 0)'; }, 100);
+
+            showResultsScreen({ stars: 0, score: runScore, isWin: false });
+            lastTime = performance.now();
+
+            postLevelResult(runScore, 0, 'fail');
+        }
+
+        function spawnEntity() {
+            const r = Math.random();
+            if (r < 0.25) {
+                // Spawn Clock
+                clocks.push({
+                    x: GAME_WIDTH + 50,
+                    y: GROUND_Y - 50 - Math.random() * 80, // Variable height
+                    width: 30, height: 30,
+                    bob: Math.random() * Math.PI * 2
+                });
+            } else {
+                // Spawn Obstacle
+                const types = ['hydrant', 'trash', 'pigeon', 'pizza', 'dog', 'skateboard', 'businessman'];
+                const type = types[Math.floor(Math.random() * types.length)];
+                
+                let w = 30, h = 40, y = GROUND_Y, speedMod = 1.0;
+                
+                if (type === 'trash') { w = 40; h = 50; }
+                if (type === 'pigeon') { w = 25; h = 20; y = GROUND_Y - 15; speedMod = 1.2; }
+                if (type === 'pizza') { w = 35; h = 10; y = GROUND_Y; }
+                if (type === 'dog') { w = 40; h = 25; y = GROUND_Y; speedMod = 1.3; } // Fast runner!
+                if (type === 'skateboard') { w = 35; h = 12; y = GROUND_Y; speedMod = 1.5; } // Rolling fast!
+                if (type === 'businessman') { w = 25; h = 65; y = GROUND_Y; speedMod = 0.8; } // Slow walker
+
+                obstacles.push({
+                    x: GAME_WIDTH + 50,
+                    y: y,
+                    width: w,
+                    height: h,
+                    type: type,
+                    speedMod: speedMod
+                });
+            }
+            
+            // Spawn rate gets slightly faster as game speeds up
+            spawnTimer = 800 + Math.random() * 1200 - (gameSpeed * 500);
+            spawnTimer = Math.max(600, spawnTimer);
+        }
+
+        function createParticles(x, y, color, count=8) {
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 0.5,
+                    vy: (Math.random() - 0.5) * 0.5 - 0.2,
+                    life: 1.0, color: color
+                });
+            }
+        }
+
+        function spawnFloatText(x, y, text, color) {
+            floatTexts.push({ x, y, text, color, life: 1.0 });
+        }
+
+        function update(dt) {
+            if (gameState !== 'PLAY') return;
+
+            // Timer & Distance
+            timeLeft -= dt;
+            distance += gameSpeed * dt;
+
+            // Live HUD preview only — final stars are recomputed in levelComplete()
+            // when the round finishes. Strict > thresholds per SCORING_GUIDE.md §2.
+            let previewStars = 1;
+            if (timeLeft > 10000) previewStars = 2;
+            if (timeLeft > 20000) previewStars = 3;
+            if (previewStars !== earnedStars) {
+                earnedStars = previewStars;
+                document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
+                document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
+                document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
+            }
+            
+            // Speed up slightly over time within the level
+            gameSpeed += 0.000005 * dt;
+
+            // UI Update
+            scoreEl.innerText = Math.floor(distance / 10);
+            
+            // Progress Bar Update
+            let progressPercent = Math.min(100, Math.max(0, (distance / targetDistance) * 100));
+            progressFill.style.width = progressPercent + '%';
+
+            if (distance >= targetDistance) {
+                levelComplete();
+                return;
+            }
+            
+            let displayTime = Math.max(0, timeLeft / 1000).toFixed(1);
+            timerEl.innerText = displayTime;
+            
+            if (timeLeft <= 5000) {
+                timerEl.className = 'text-red-500 text-xl animate-pulse';
+                timerContainer.classList.add('alert-glow');
+            } else {
+                timerEl.className = 'text-green-400 text-xl';
+                timerContainer.classList.remove('alert-glow');
+            }
+
+            if (timeLeft <= 0) {
+                gameOver();
+                return;
+            }
+
+            // Bunny Physics
+            if (!bunny.isGrounded) {
+                bunny.vy += bunny.gravity * dt;
+                bunny.y += bunny.vy * dt;
+
+                if (bunny.y >= GROUND_Y) {
+                    bunny.y = GROUND_Y;
+                    bunny.vy = 0;
+                    bunny.isGrounded = true;
+                    createParticles(bunny.x + bunny.width/2, GROUND_Y, '#aaaaaa', 3); // Landing dust
+                }
+            }
+
+            if (bunny.invincibleTimer > 0) {
+                bunny.invincibleTimer -= dt;
+            }
+
+            // Collision Box (Bunny + Stroller)
+            const playerBox = {
+                x: bunny.x,
+                y: bunny.y - bunny.height, // Y is at ground, box goes up
+                width: bunny.width + STROLLER_W, // combined width
+                height: bunny.height
+            };
+
+            // Spawning
+            spawnTimer -= dt;
+            // Stop spawning if we are very close to home
+            if (spawnTimer <= 0 && targetDistance - distance > 100) spawnEntity();
+
+            // Parallax Backgrounds
+            cityOffset1 = (cityOffset1 + gameSpeed * 0.2 * dt) % 100;
+            roadOffset = (roadOffset + gameSpeed * dt) % 40;
+            cloudOffset = (cloudOffset + gameSpeed * 0.05 * dt) % 750;
+
+            // Foreground Scenery (Dynamic Neighborhood)
+            for (let i = 0; i < foregroundScenery.length; i++) {
+                foregroundScenery[i].x -= gameSpeed * 0.5 * dt;
+            }
+            if (foregroundScenery[0] && foregroundScenery[0].x + foregroundScenery[0].w < -100) {
+                foregroundScenery.shift();
+            }
+            let lastScenery = foregroundScenery[foregroundScenery.length - 1];
+            if (lastScenery && lastScenery.x + lastScenery.w < GAME_WIDTH + 200) {
+                addScenery(lastScenery.x + lastScenery.w + 10);
+            }
+
+            // Obstacles
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                let obs = obstacles[i];
+                obs.x -= gameSpeed * obs.speedMod * dt;
+                
+                // Pigeons hop slightly
+                if (obs.type === 'pigeon') {
+                    obs.y = GROUND_Y - 15 - Math.abs(Math.sin(distance/50) * 10);
+                }
+
+                // Collision
+                if (bunny.invincibleTimer <= 0) {
+                    if (playerBox.x < obs.x + obs.width &&
+                        playerBox.x + playerBox.width > obs.x &&
+                        playerBox.y < obs.y && // Obstacle y is at bottom
+                        playerBox.y + playerBox.height > obs.y - obs.height) 
+                    {
+                        // HIT!
+                        timeLeft -= 5000; // Lose 5 seconds!
+                        bunny.invincibleTimer = 1500; // 1.5s invincibility
+                        
+                        spawnFloatText(bunny.x + 30, bunny.y - 80, "-5s", "#e74c3c");
+                        createParticles(obs.x + obs.width/2, obs.y - obs.height/2, '#e74c3c', 15);
+                        
+                        // Screen shake flash
+                        ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+                    }
+                }
+
+                if (obs.x + obs.width < 0) obstacles.splice(i, 1);
+            }
+
+            // Clocks
+            for (let i = clocks.length - 1; i >= 0; i--) {
+                let c = clocks[i];
+                c.x -= gameSpeed * dt;
+                c.bob += 0.005 * dt;
+
+                // Bobbing motion
+                let bobY = c.y + Math.sin(c.bob) * 10;
+
+                // Collision
+                if (playerBox.x < c.x + c.width &&
+                    playerBox.x + playerBox.width > c.x &&
+                    playerBox.y < bobY + c.height &&
+                    playerBox.y + playerBox.height > bobY) 
+                {
+                    timeLeft += 3000; // Gain 3 seconds!
+                    spawnFloatText(c.x, bobY, "+3s", "#2ecc71");
+                    createParticles(c.x + c.width/2, bobY + c.height/2, '#f1c40f', 10);
+                    clocks.splice(i, 1);
+                    continue;
+                }
+
+                if (c.x + c.width < 0) clocks.splice(i, 1);
+            }
+
+            // Particles & Texts
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.life -= 0.002 * dt;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            for (let i = floatTexts.length - 1; i >= 0; i--) {
+                let ft = floatTexts[i];
+                ft.y -= 0.05 * dt;
+                ft.life -= 0.0015 * dt;
+                if (ft.life <= 0) floatTexts.splice(i, 1);
+            }
+        }
+
+        // --- Drawing ---
+
+        function drawCityscape() {
+            // Background Sky (Daytime)
+            ctx.fillStyle = '#4fc3f7'; // Vibrant light blue
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            // Sun
+            ctx.fillStyle = '#ffeb3b'; // Brighter sun
+            ctx.beginPath(); ctx.arc(320, 100, 40, 0, Math.PI*2); ctx.fill();
+
+            // Clouds
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            for(let i=0; i<3; i++) {
+                let cx = (i * 250 - cloudOffset);
+                if (cx < -150) cx += 750;
+                let cy = 80 + (i % 2) * 50;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 20, 0, Math.PI*2);
+                ctx.arc(cx + 25, cy - 15, 30, 0, Math.PI*2);
+                ctx.arc(cx + 50, cy, 20, 0, Math.PI*2);
+                ctx.fill();
+            }
+
+            // Back Buildings (Slow, Daytime)
+            ctx.fillStyle = '#90caf9'; // Blueish faded buildings to blend with sky
+            for(let i=0; i<6; i++) {
+                let h = 150 + (i%3)*50;
+                let x = i*100 - cityOffset1;
+                if (x < -100) x += 600;
+                ctx.fillRect(x, GROUND_Y - h, 100, h);
+            }
+
+            // Foreground Neighborhood Scenery
+            for(let i=0; i < foregroundScenery.length; i++) {
+                let s = foregroundScenery[i];
+                
+                if (s.type === 'building') {
+                    let h = 120 + (Math.floor(s.seed * 50));
+                    // Alternate building colors based on seed
+                    const colors = ['#9b59b6', '#3498db', '#1abc9c'];
+                    ctx.fillStyle = colors[Math.floor(s.seed * colors.length)];
+                    ctx.fillRect(s.x, GROUND_Y - h, s.w, h);
+                    ctx.fillStyle = '#f1c40f'; // Bright yellow lit windows
+                    for(let wy=20; wy<h-20; wy+=30) {
+                        for(let wx=20; wx<s.w-20; wx+=40) {
+                            ctx.fillRect(s.x + wx, GROUND_Y - h + wy, 15, 15);
+                        }
+                    }
+                } 
+                else if (s.type === 'shop') {
+                    ctx.fillStyle = '#e67e22'; // Orange
+                    ctx.fillRect(s.x, GROUND_Y - 80, s.w, 80);
+                    ctx.fillStyle = '#8ce1ff'; // brighter glass window
+                    ctx.fillRect(s.x + 10, GROUND_Y - 50, s.w - 40, 30);
+                    ctx.fillStyle = '#8b4513'; // door
+                    ctx.fillRect(s.x + s.w - 25, GROUND_Y - 40, 20, 40);
+                    // Awning
+                    for(let aw=0; aw<s.w; aw+=10) {
+                        ctx.fillStyle = (Math.floor(aw/10)%2===0) ? '#e74c3c' : '#f1c40f'; // Red/Yellow awning
+                        ctx.fillRect(s.x + aw, GROUND_Y - 80, 10, 20);
+                        ctx.beginPath(); ctx.arc(s.x + aw + 5, GROUND_Y - 60, 5, 0, Math.PI); ctx.fill();
+                    }
+                } 
+                else if (s.type === 'house') {
+                    let h = 90;
+                    ctx.fillStyle = '#fdf2e9'; // Creamy white walls
+                    ctx.fillRect(s.x, GROUND_Y - h, s.w, h);
+                    ctx.fillStyle = '#e74c3c'; // vibrant red roof
+                    ctx.beginPath(); 
+                    ctx.moveTo(s.x - 10, GROUND_Y - h); 
+                    ctx.lineTo(s.x + s.w/2, GROUND_Y - h - 40); 
+                    ctx.lineTo(s.x + s.w + 10, GROUND_Y - h); 
+                    ctx.fill();
+                    ctx.fillStyle = '#8b4513'; // door
+                    ctx.fillRect(s.x + s.w/2 - 10, GROUND_Y - 30, 20, 30);
+                } 
+                else if (s.type === 'park') {
+                    ctx.fillStyle = '#2ecc71'; // Vibrant grass patch
+                    ctx.fillRect(s.x, GROUND_Y - 10, s.w, 10);
+                    // Trees
+                    let numTrees = Math.floor(s.seed * 3) + 1;
+                    for(let t=0; t<numTrees; t++) {
+                        let tx = s.x + 20 + (t * 50);
+                        if (tx > s.x + s.w - 20) break;
+                        ctx.fillStyle = '#8b4513'; // Trunk
+                        ctx.fillRect(tx - 5, GROUND_Y - 40, 10, 30);
+                        ctx.fillStyle = '#2ecc71'; // Leaves top
+                        ctx.beginPath(); ctx.arc(tx, GROUND_Y - 50, 20, 0, Math.PI*2); ctx.fill();
+                        ctx.fillStyle = '#27ae60'; // Leaves bottom/sides
+                        ctx.beginPath(); ctx.arc(tx - 10, GROUND_Y - 40, 15, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(tx + 10, GROUND_Y - 40, 15, 0, Math.PI*2); ctx.fill();
+                    }
+                }
+            }
+
+            // Street
+            ctx.fillStyle = '#ecf0f1'; // Brighter Sidewalk
+            ctx.fillRect(0, GROUND_Y, GAME_WIDTH, 20);
+            ctx.fillStyle = '#bdc3c7'; // curb
+            ctx.fillRect(0, GROUND_Y+20, GAME_WIDTH, 5);
+            ctx.fillStyle = '#2c3e50'; // Darker Asphalt to make characters pop
+            ctx.fillRect(0, GROUND_Y+25, GAME_WIDTH, GAME_HEIGHT - GROUND_Y - 25);
+            
+            // Road markings
+            ctx.fillStyle = '#f1c40f';
+            for(let i=0; i<12; i++) {
+                let x = i*40 - roadOffset;
+                ctx.fillRect(x, GROUND_Y + 60, 20, 5);
+            }
+        }
+
+        function drawBunnyAndStroller(x, y) {
+            // Flash if invincible
+            if (bunny.invincibleTimer > 0) {
+                if (Math.floor(performance.now() / 100) % 2 === 0) return;
+            }
+
+            const w = bunny.width;
+            const h = bunny.height;
+
+            // Layer 1: cotton-ball tail behind the body, on the left
+            // (opposite of the running direction).
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(x + w*0.04, y - h*0.32, w*0.13, 0, Math.PI*2); ctx.fill();
+
+            // Layer 2: soft pink ellipse body (matches the round head).
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.5, y - h*0.3, w*0.42, h*0.28, 0, 0, Math.PI*2); ctx.fill();
+
+            // Layer 3: feet — running animation. Grounded: alternate phase
+            // off travel distance. Airborne: tucked.
+            const phase = bunny.isGrounded ? Math.sin(distance * 0.18) * 3 : -2;
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.3, y - phase, w*0.15, h*0.06, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.65, y + phase, w*0.15, h*0.06, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#ffd2e2';
+            ctx.beginPath(); ctx.ellipse(x + w*0.3, y - phase, w*0.06, h*0.025, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.65, y + phase, w*0.06, h*0.025, 0, 0, Math.PI*2); ctx.fill();
+
+            // --- Layer 4: circle-mascot head (matches swaddle-gami / bottle-rama) ---
+            const headCx = x + w*0.5;
+            const headCy = y - h*0.62;
+            const headR  = w*0.45;
+
+            // Ears - ellipses tilt back while airborne.
+            let earOffset = bunny.isGrounded ? 0 : 4;
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(headCx - headR*0.55, headCy - headR*1.1 + earOffset, headR*0.32, headR*0.9, -0.25, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(headCx + headR*0.55, headCy - headR*1.1 + earOffset, headR*0.32, headR*0.9,  0.25, 0, Math.PI*2); ctx.fill();
+
+            // Head circle.
+            ctx.beginPath(); ctx.arc(headCx, headCy, headR, 0, Math.PI*2); ctx.fill();
+
+            // Eyes - both shifted right (running direction).
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx - headR*0.18, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(headCx + headR*0.45, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+
+            // White snout (muzzle) with the nose at its top — biased right
+            // so the bunny reads as "facing forward".
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.ellipse(headCx + headR*0.4, headCy + headR*0.42, headR*0.32, headR*0.22, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx + headR*0.5, headCy + headR*0.28, headR*0.13, 0, Math.PI*2); ctx.fill();
+
+            // Stroller
+            const sx = x + w - 5;
+            const sy = y - STROLLER_H;
+
+            // Carriage body
+            ctx.fillStyle = '#3498db'; // Blue stroller
+            ctx.beginPath();
+            ctx.arc(sx + 20, sy + 25, 20, 0, Math.PI);
+            ctx.fill();
+            
+            // Baby head
+            ctx.fillStyle = '#f1c27d';
+            ctx.beginPath(); ctx.arc(sx + 12, sy + 20, 8, 0, Math.PI*2); ctx.fill();
+            // Zzz
+            if (Math.floor(performance.now() / 200) % 2 === 0) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '8px monospace';
+                ctx.fillText('z', sx + 6, sy + 8);
+                ctx.fillText('Z', sx + 14, sy + 2);
+            }
+
+            // Wheels
+            let wheelRot = -distance * 0.1; // Rotate wheels based on distance
+            ctx.fillStyle = '#222';
+            
+            function drawWheel(wx, wy) {
+                ctx.save();
+                ctx.translate(wx, wy);
+                ctx.rotate(wheelRot);
+                ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-2, -6, 4, 12);
+                ctx.fillRect(-6, -2, 12, 4);
+                ctx.fillStyle = '#222'; // reset
+                ctx.restore();
+            }
+            
+            drawWheel(sx + 8, sy + 40);
+            drawWheel(sx + 32, sy + 40);
+        }
+
+        function drawObstacle(obs) {
+            const bx = obs.x;
+            const by = obs.y - obs.height; // y is ground level
+            const w = obs.width;
+            const h = obs.height;
+
+            if (obs.type === 'hydrant') {
+                ctx.fillStyle = '#e74c3c';
+                ctx.fillRect(bx + 5, by + 10, w - 10, h - 10); // Body
+                ctx.fillRect(bx, by + 20, w, 8); // Arms
+                ctx.beginPath(); ctx.arc(bx + w/2, by + 10, (w-10)/2, 0, Math.PI*2); ctx.fill(); // Top
+            } 
+            else if (obs.type === 'trash') {
+                ctx.fillStyle = '#7f8c8d';
+                ctx.fillRect(bx, by, w, h); // Bin
+                ctx.fillStyle = '#95a5a6';
+                ctx.fillRect(bx - 2, by - 5, w + 4, 8); // Lid
+                // Lines
+                ctx.fillStyle = '#34495e';
+                for(let i=1; i<4; i++) ctx.fillRect(bx + i*10, by + 10, 2, h - 20);
+            }
+            else if (obs.type === 'pigeon') {
+                ctx.fillStyle = '#8e44ad'; // Purple Body to pop against the grey city
+                ctx.beginPath(); ctx.ellipse(bx + w/2, by + h/2, w/2, h/2, 0, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#f1c40f'; // Yellow Beak
+                ctx.beginPath(); ctx.moveTo(bx, by + h/2); ctx.lineTo(bx - 5, by + h/2 + 5); ctx.lineTo(bx, by + h/2 + 5); ctx.fill();
+                ctx.fillStyle = '#fff'; // White Eye Outline
+                ctx.fillRect(bx + 4, by + 4, 5, 5);
+                ctx.fillStyle = '#111'; // Eye Pupil
+                ctx.fillRect(bx + 5, by + 5, 3, 3);
+                // Wings flap
+                if (Math.floor(performance.now() / 100) % 2 === 0) {
+                    ctx.fillStyle = '#9b59b6'; // Lighter purple wing
+                    ctx.beginPath(); ctx.ellipse(bx + w/2 + 5, by + 2, 8, 5, -0.5, 0, Math.PI*2); ctx.fill();
+                }
+            }
+            else if (obs.type === 'pizza') {
+                ctx.fillStyle = '#f1c40f'; // Crust/Cheese base
+                ctx.beginPath(); ctx.moveTo(bx, by+h); ctx.lineTo(bx+w, by+h); ctx.lineTo(bx+w/2, by); ctx.fill();
+                ctx.fillStyle = '#e74c3c'; // Pepperoni
+                ctx.fillRect(bx+w/2 - 2, by + 4, 4, 4);
+                ctx.fillRect(bx+w/3, by + 6, 3, 3);
+                ctx.fillRect(bx+w*0.6, by + 7, 3, 3);
+                ctx.fillStyle = '#e67e22'; // Crust back
+                ctx.fillRect(bx+w/2 - 5, by, 10, 3);
+            }
+            else if (obs.type === 'dog') {
+                ctx.fillStyle = '#8b4513'; // Brown body
+                ctx.fillRect(bx+10, by+10, w-10, h-10); // body
+                ctx.fillRect(bx, by+5, 15, 12); // head
+                ctx.fillStyle = '#111'; // nose/eye
+                ctx.fillRect(bx, by+5, 3, 3); // nose
+                ctx.fillRect(bx+5, by+7, 3, 3); // eye
+                ctx.fillStyle = '#5c4033'; // Legs (animate)
+                let legAnim = (Math.floor(performance.now() / 100) % 2 === 0) ? 0 : 5;
+                ctx.fillRect(bx+15-legAnim, by+h-5, 4, 5);
+                ctx.fillRect(bx+w-10+legAnim, by+h-5, 4, 5);
+                ctx.fillStyle = '#e74c3c'; // Collar
+                ctx.fillRect(bx+10, by+10, 4, 12);
+            }
+            else if (obs.type === 'skateboard') {
+                ctx.fillStyle = '#2ecc71'; // Green board
+                ctx.fillRect(bx, by, w, 4);
+                ctx.fillStyle = '#333'; // Wheels
+                ctx.beginPath(); ctx.arc(bx+8, by+8, 4, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(bx+w-8, by+8, 4, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#f1c40f'; // Stripe
+                ctx.fillRect(bx+w/2-2, by, 4, 4);
+            }
+            else if (obs.type === 'businessman') {
+                ctx.fillStyle = '#2c3e50'; // Suit
+                ctx.fillRect(bx, by+15, w, h-15);
+                ctx.fillStyle = '#f1c27d'; // Head
+                ctx.fillRect(bx+5, by, w-10, 15);
+                ctx.fillStyle = '#111'; // Hair/Eye
+                ctx.fillRect(bx+5, by, w-10, 5);
+                ctx.fillRect(bx+5, by+7, 3, 3); // eye looking left
+                ctx.fillStyle = '#fff'; // Shirt
+                ctx.fillRect(bx+w/2-2, by+15, 4, 15);
+                ctx.fillStyle = '#e74c3c'; // Tie
+                ctx.fillRect(bx+w/2-1, by+15, 2, 10);
+                // Briefcase
+                ctx.fillStyle = '#8b4513';
+                let armAnim = (Math.floor(performance.now() / 200) % 2 === 0) ? 0 : 5;
+                ctx.fillRect(bx-10, by+30+armAnim, 12, 15); // Briefcase swing
+            }
+        }
+
+        function drawClock(c) {
+            let bobY = c.y + Math.sin(c.bob) * 10;
+            
+            // Outer Rim
+            ctx.fillStyle = '#f39c12';
+            ctx.beginPath(); ctx.arc(c.x + c.width/2, bobY + c.height/2, c.width/2, 0, Math.PI*2); ctx.fill();
+            
+            // Inner Face
+            ctx.fillStyle = '#fff';
+            ctx.beginPath(); ctx.arc(c.x + c.width/2, bobY + c.height/2, c.width/2 - 4, 0, Math.PI*2); ctx.fill();
+            
+            // Bells
+            ctx.fillStyle = '#e67e22';
+            ctx.beginPath(); ctx.arc(c.x + 5, bobY + 5, 6, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(c.x + c.width - 5, bobY + 5, 6, 0, Math.PI*2); ctx.fill();
+
+            // Hands (Spinning)
+            ctx.save();
+            ctx.translate(c.x + c.width/2, bobY + c.height/2);
+            ctx.rotate(performance.now() * 0.005);
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(0, -2, 10, 4);
+            ctx.fillStyle = '#333';
+            ctx.fillRect(-2, -8, 4, 8);
+            ctx.restore();
+        }
+
+        function draw() {
+            drawCityscape();
+
+            if (gameState === 'START') return;
+
+            // Draw Entities
+            clocks.forEach(c => drawClock(c));
+            obstacles.forEach(o => drawObstacle(o));
+            drawBunnyAndStroller(bunny.x, bunny.y);
+
+            // Draw Particles & Texts
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life;
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), 4, 4); 
+            });
+            ctx.globalAlpha = 1.0;
+
+            floatTexts.forEach(ft => {
+                ctx.fillStyle = ft.color;
+                ctx.globalAlpha = Math.max(0, ft.life);
+                ctx.font = '16px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.fillText(ft.text, ft.x, ft.y);
+            });
+            ctx.globalAlpha = 1.0;
+        }
+
+        function gameLoop(timestamp) {
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+            if (dt > 100) dt = 16; 
+
+            update(dt);
+            draw();
+
+            if (gameState === 'PLAY') {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Boot Rendering
+        drawCityscape();
+
+        if (urlParams.get('autoStart') === 'true') {
+            startGame();
+        }
+
+    </script>
+</body>
+</html>

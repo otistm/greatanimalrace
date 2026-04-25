@@ -1,0 +1,109 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: /leaderboards/{gameId}/entries
+    // Document ID: userId
+    // Fields:
+    //   - userId: string (required, immutable) - Auth UID of the player
+    //   - gameId: string (required, immutable) - The ID of the mini game
+    //   - score: number (required) - The score achieved
+    //   - playerName: string (required, max 50 chars) - Display name
+    //   - animalId: string (required, max 20 chars) - Animal selected
+    //   - createdAt: timestamp (required) - Timestamp of creation/update
+    //
+    // Collection: /users
+    // Document ID: userId
+    // Fields:
+    //   - selectedAnimalId: string (optional, max 20 chars) - Current animal
+    //   - progression: map (optional) - Pet progression (age, xp, hunger, happiness)
+    // ===============================================================
+
+    function isAuthenticated() {
+       return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+       return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+       return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    function uidUnchanged() {
+       return !('userId' in request.resource.data) ||
+         request.resource.data.userId == request.auth.uid;
+    }
+
+    function uidNotModified() {
+       return !('userId' in request.resource.data) ||
+         request.resource.data.userId == resource.data.userId;
+    }
+
+    function validStringLength(fieldData, minLen, maxLen) {
+       return fieldData is string &&
+         fieldData.size() >= minLen &&
+         fieldData.size() <= maxLen;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+    
+    // Check fields for Leaderboard Entry
+    function isValidLeaderboardEntry(data, expectedGameId) {
+       return hasOnlyAllowedFields(['userId', 'gameId', 'score', 'playerName', 'animalId', 'createdAt']) &&
+              data.keys().hasAll(['userId', 'gameId', 'score', 'playerName', 'animalId', 'createdAt']) &&
+              data.userId is string && data.userId == request.auth.uid &&
+              data.gameId is string && data.gameId == expectedGameId &&
+              data.score is number && data.score >= 0 &&
+              validStringLength(data.playerName, 1, 50) &&
+              validStringLength(data.animalId, 1, 20) &&
+              data.createdAt is timestamp;
+    }
+
+    match /leaderboards/{gameId}/entries/{userId} {
+       // Only logged in users can view the leaderboard
+       allow read: if isAuthenticated();
+       
+       // A user can create their own score entry
+       allow create: if isAuthenticated() &&
+                     isOwner(userId) &&
+                     isValidLeaderboardEntry(request.resource.data, gameId);
+                     
+       // A user can update their score, typically only if the new score is higher 
+       // (but we'll allow any update from the owner as long as it's valid data).
+       // We ensure immutable fields don't change.
+       allow update: if isAuthenticated() &&
+                     isOwner(userId) &&
+                     uidNotModified() &&
+                     request.resource.data.gameId == resource.data.gameId && // immutable
+                     isValidLeaderboardEntry(request.resource.data, gameId);
+                     
+       // Users can reset/delete their own score
+       allow delete: if isOwner(userId);
+    }
+
+    match /users/{userId} {
+       // Allow any authenticated user to read all users (for global leaderboard)
+       allow read: if isAuthenticated();
+       
+       // User can delete their own document
+       allow delete: if isOwner(userId);
+       
+       // User can create and update their progress
+       allow create, update: if isOwner(userId) &&
+                             hasOnlyAllowedFields(['selectedAnimalId', 'progression', 'petName']) &&
+                             (!('selectedAnimalId' in request.resource.data) || validStringLength(request.resource.data.selectedAnimalId, 1, 20)) &&
+                             (!('petName' in request.resource.data) || validStringLength(request.resource.data.petName, 0, 50)) &&
+                             (!('progression' in request.resource.data) || (
+                               request.resource.data.progression is map &&
+                               request.resource.data.progression.keys().hasOnly(['age', 'xp', 'hunger', 'happiness'])
+                             ));
+    }
+  }
+}

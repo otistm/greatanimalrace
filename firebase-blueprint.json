@@ -1,0 +1,24 @@
+{
+  "entities": {
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "A score entry for a specific mini-game.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Auth UID of the player" },
+        "gameId": { "type": "string", "description": "The ID of the mini game (carrot_catch, bunny_hop, hide_and_seek)" },
+        "score": { "type": "number", "description": "The score achieved" },
+        "playerName": { "type": "string", "description": "Display name of the player" },
+        "animalId": { "type": "string", "description": "The animal played with (bunny, unicorn, etc.)" },
+        "createdAt": { "type": "timestamp", "description": "When the score was achieved" }
+      },
+      "required": ["userId", "gameId", "score", "playerName", "animalId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/leaderboards/{gameId}/entries/{entryId}": {
+      "schema": { "$ref": "#/entities/LeaderboardEntry" },
+      "description": "High scores for a specific mini-game."
+    }
+  }
+}

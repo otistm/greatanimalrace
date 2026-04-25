@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bottle-Rama</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            touch-action: none;
+            font-family: 'Press Start 2P', monospace;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
+            max-width: 600px;
+            margin: 0 auto;
+            background: #050505;
+            box-shadow: 0 0 30px rgba(50, 200, 150, 0.15);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* HUD header bar — sits ABOVE the canvas so nothing overlaps the in-canvas
+           order ticket / bunny chef artwork. */
+        #hud {
+            flex: 0 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            background: #1a1a1a;
+            border-bottom: 4px solid #333;
+            color: #fff;
+            font-size: 10px;
+            letter-spacing: 1px;
+            z-index: 30;
+        }
+        #hud .hud-left,
+        #hud .hud-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        #hud .hud-right { justify-content: flex-end; }
+        #hud .orders { color: #f1c40f; white-space: nowrap; }
+        #hud .hud-stars { display: flex; gap: 4px; }
+        #hud .hud-stars .star { font-size: 26px; line-height: 1; }
+        #timer-display {
+            color: #2ecc71;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+        #timer-display.warning { color: #e74c3c; }
+        #hud-exit-btn {
+            background: #c0392b;
+            color: #fff;
+            width: 26px; height: 26px;
+            border: 2px solid #fff;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            cursor: pointer;
+            box-shadow: 0 2px 0 #7b1f15;
+        }
+        #hud-exit-btn:active { transform: translateY(2px); box-shadow: none; }
+
+        @media (min-width: 400px) {
+            #hud { font-size: 12px; padding: 10px 14px; }
+            #hud .hud-stars .star { font-size: 32px; }
+            #timer-display { font-size: 18px; }
+            #hud-exit-btn { width: 30px; height: 30px; font-size: 12px; }
+        }
+
+        /* Canvas area — flexes to fill remaining space, keeps the canvas a
+           strict 1:1 aspect ratio (matching the internal 400x400 backbuffer)
+           so nothing is stretched on portrait/landscape/odd aspect ratios. */
+        #canvas-wrapper {
+            position: relative;
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #050505;
+            overflow: hidden;
+        }
+
+        #canvas-stage {
+            position: relative;
+            aspect-ratio: 1 / 1;
+            width: auto;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            background: #2c3e50;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+        }
+
+        .scanlines {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.25) 50%,
+                rgba(0,0,0,0.25)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .crt-flicker {
+            animation: flicker 0.15s infinite;
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.95; }
+            50% { opacity: 1; }
+            100% { opacity: 0.95; }
+        }
+
+        .text-glow {
+            text-shadow: 2px 2px 0px #e67e22, -1px -1px 0px #f1c40f;
+        }
+
+        /* Control Panel */
+        #control-panel {
+            flex: 0 0 auto;
+            background: #1a1a1a;
+            border-top: 4px solid #333;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 20;
+        }
+
+        .main-actions {
+            display: flex;
+            gap: 8px;
+            height: 44px;
+        }
+
+        .grid-actions {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+        }
+        .grid-actions .btn { min-height: 40px; }
+
+        @media (min-height: 700px) {
+            .main-actions { height: 50px; }
+            .grid-actions { gap: 8px; }
+            .grid-actions .btn { min-height: 48px; }
+        }
+
+        .btn {
+            background: #34495e;
+            border: 3px solid #2c3e50;
+            color: #ecf0f1;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            border-radius: 6px;
+            box-shadow: 0 4px 0 #1a252f;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.1s, background 0.1s;
+        }
+        
+        @media (min-width: 400px) {
+            .btn { font-size: 12px; }
+        }
+
+        .btn:active, .btn.active {
+            transform: translateY(4px);
+            box-shadow: 0 0px 0 #1a252f;
+            background: #4fc3f7;
+            color: #111;
+            border-color: #0288d1;
+        }
+
+        .btn-serve { background: #27ae60; border-color: #2ecc71; box-shadow: 0 4px 0 #1e8449; flex: 2;}
+        .btn-serve:active { background: #2ecc71; box-shadow: 0 0px 0 #1e8449; }
+        
+        .btn-trash { background: #c0392b; border-color: #e74c3c; box-shadow: 0 4px 0 #922b21; flex: 1;}
+        .btn-trash:active { background: #e74c3c; box-shadow: 0 0px 0 #922b21; }
+
+        .star { color: #555; font-size: 30px; text-shadow: 2px 2px 0 #000; }
+        .star.earned { color: #f1c40f; text-shadow: 2px 2px 0 #d35400; animation: pop 0.3s ease-out; }
+
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.5); }
+            100% { transform: scale(1); }
+        }
+
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+    <div id="game-container" class="crt-flicker">
+        
+        <!-- Start Screen (Outside canvas-wrapper to cover whole game) -->
+        <div id="start-screen" class="absolute inset-0 bg-black/90 flex flex-col items-center justify-center z-[100] p-4 text-center">
+            <h1 class="text-3xl sm:text-4xl text-white mb-4 text-glow leading-loose">BOTTLE<br>RAMA</h1>
+            <p class="text-gray-300 text-[9px] sm:text-[10px] mb-8 leading-loose uppercase">
+                Read the recipe ticket.<br>
+                Wash & Dry containers first!<br>
+                Add ingredients, temp, and mix.<br>
+                Cap it and serve before time runs out!
+            </p>
+            <div class="flex flex-col sm:flex-row gap-4 w-full max-w-xs">
+                <button id="start-btn" class="flex-1 bg-yellow-500 hover:bg-yellow-400 text-black border-4 border-white px-4 py-3 rounded text-xs uppercase animate-pulse cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Insert Coin
+                </button>
+                <button id="start-exit-btn" class="flex-1 bg-red-600 hover:bg-red-500 text-white border-4 border-white px-4 py-3 rounded text-xs uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Close
+                </button>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="absolute inset-0 bg-red-900/95 flex flex-col items-center justify-center z-[100] hidden p-4 text-center">
+            <button id="over-exit-btn" class="absolute top-4 right-4 bg-red-600 hover:bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center border-2 border-white shadow-md pointer-events-auto transition-transform hover:scale-105 active:scale-95 text-xs">
+                X
+            </button>
+            <h1 class="text-4xl text-white mb-2 text-glow">TIME'S UP!</h1>
+            <div id="final-stars-display" class="flex gap-2 mb-6">
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+                <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+            </div>
+            <p class="text-white text-lg mb-8 font-bold">SCORE: <span id="final-score" class="text-yellow-300">0</span></p>
+            <div class="flex flex-col sm:flex-row gap-4 w-full max-w-xs justify-center">
+                <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
+                    Play Again
+                </button>
+                <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Next Level
+                </button>
+            </div>
+        </div>
+
+        <!-- HUD header bar (above the canvas, never overlaps gameplay art) -->
+        <div id="hud">
+            <div class="hud-left">
+                <div class="orders">ORDERS: <span id="score-display">0/2</span></div>
+                <div id="hud-stars" class="hud-stars">
+                    <span id="star-1" class="star">★</span>
+                    <span id="star-2" class="star">★</span>
+                    <span id="star-3" class="star">★</span>
+                </div>
+            </div>
+            <div class="hud-right">
+                <div id="timer-display">60.0s</div>
+                <button id="hud-exit-btn" aria-label="Exit">X</button>
+            </div>
+        </div>
+
+        <div id="canvas-wrapper">
+            <div id="canvas-stage">
+                <canvas id="gameCanvas"></canvas>
+                <div class="scanlines"></div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div id="control-panel">
+            <div class="main-actions">
+                <button class="btn btn-trash" onclick="handleAction('trash')">TRASH</button>
+                <button class="btn btn-serve" onclick="handleAction('serve')">SERVE TO BABY</button>
+            </div>
+            <div class="grid-actions">
+                <button class="btn" onclick="handleAction('bottle')">BOTTLE</button>
+                <button class="btn" onclick="handleAction('cup')">CUP</button>
+                <button class="btn" onclick="handleAction('wash')" style="background: #2980b9;">WASH</button>
+                <button class="btn" onclick="handleAction('dry')" style="background: #d35400;">DRY</button>
+                
+                <button class="btn" onclick="handleAction('water')" style="color: #87CEEB;">+WATER</button>
+                <button class="btn" onclick="handleAction('formula')" style="color: #f1c40f;">+FORMULA</button>
+                <button class="btn" onclick="handleAction('heat')" style="color: #e74c3c;">HEAT</button>
+                <button class="btn" onclick="handleAction('chill')" style="color: #3498db;">CHILL</button>
+                
+                <button class="btn" onclick="handleAction('shake')">SHAKE</button>
+                <button class="btn" onclick="handleAction('stir')">STIR</button>
+                <button class="btn" onclick="handleAction('nipple')">NIPPLE</button>
+                <button class="btn" onclick="handleAction('straw')">STRAW</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const GAME_ID = 'bottle_rama';
+        let resultPosted = false;
+
+        // Navigation-only message helpers (no score/stars). Crediting happens once via LEVEL_RESULT.
+        function exitGame() {
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
+        }
+
+        function postLevelResult(finalScore, finalStars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
+            window.parent.postMessage({
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: currentLevel,
+                stars: finalStars,
+                score: finalScore,
+                outcome
+            }, '*');
+        }
+
+        // Add exit handlers
+        document.getElementById('hud-exit-btn').addEventListener('click', exitGame);
+        document.getElementById('start-exit-btn').addEventListener('click', exitGame);
+        document.getElementById('over-exit-btn').addEventListener('click', exitGame);
+
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const GAME_WIDTH = 400;
+        const GAME_HEIGHT = 400; // Aspect ratio specifically for top half
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // UI
+        const scoreEl = document.getElementById('score-display');
+        const timerEl = document.getElementById('timer-display');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+
+        // Game State
+        const urlParams = new URLSearchParams(window.location.search);
+        // Per SCORING_GUIDE.md §6: clamp ?level= to 1..5.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevel = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
+
+        const LEVEL_CONFIGS = [
+            { targetOrders: 2, timeLimit: 60000 },
+            { targetOrders: 3, timeLimit: 60000 },
+            { targetOrders: 4, timeLimit: 60000 },
+            { targetOrders: 5, timeLimit: 50000 },
+            { targetOrders: 6, timeLimit: 50000 }
+        ];
+
+        let gameState = 'START';
+        let score = 0; // = orders served (canonical score per SCORING_GUIDE.md §3)
+        let targetOrders = LEVEL_CONFIGS[currentLevel - 1].targetOrders;
+        let timeLimit = LEVEL_CONFIGS[currentLevel - 1].timeLimit;
+        let timeLeft = timeLimit;
+        let lastTime = 0;
+        let earnedStars = 0;
+        
+        let currentItem = null; // What the bunny is holding
+        let currentOrder = null; // What we need to make
+        
+        let particles = [];
+        let floatTexts = [];
+        
+        let bunnyState = 'awake';
+        let bunnyStateTimer = 0;
+        
+        // --- Entities & Logic ---
+        
+        // Recipes are tagged with a `difficulty` (1–5) so each level draws from
+        // a tier-appropriate pool. Higher difficulties unlock more axes of
+        // variation: temperature, mixing, larger sizes, exotic combos.
+        //   - difficulty 1: room temp water, no mixing required
+        //   - difficulty 2: introduces formula + mixing (shake/stir)
+        //   - difficulty 3: introduces non-room temperatures (warm/cold)
+        //   - difficulty 4: introduces hot temperatures and full bottles
+        //   - difficulty 5: max-complexity orders requiring every step
+        const RECIPES = [
+            // --- Tier 1: warm-up ----------------------------------------
+            { difficulty: 1, type: 'cup',    water: 1, formula: 0, temp: 'room', mixed: 'none',    lid: 'straw'  },
+            { difficulty: 1, type: 'cup',    water: 2, formula: 0, temp: 'room', mixed: 'none',    lid: 'straw'  },
+            { difficulty: 1, type: 'bottle', water: 2, formula: 0, temp: 'room', mixed: 'none',    lid: 'nipple' },
+            { difficulty: 1, type: 'bottle', water: 3, formula: 0, temp: 'room', mixed: 'none',    lid: 'nipple' },
+            // --- Tier 2: formula + mixing -------------------------------
+            { difficulty: 2, type: 'cup',    water: 1, formula: 1, temp: 'room', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 2, type: 'cup',    water: 2, formula: 1, temp: 'room', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 2, type: 'bottle', water: 2, formula: 1, temp: 'room', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 2, type: 'bottle', water: 3, formula: 1, temp: 'room', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 2, type: 'bottle', water: 2, formula: 2, temp: 'room', mixed: 'shaken',  lid: 'nipple' },
+            // --- Tier 3: temperature -----------------------------------
+            { difficulty: 3, type: 'cup',    water: 3, formula: 0, temp: 'cold', mixed: 'none',    lid: 'straw'  },
+            { difficulty: 3, type: 'cup',    water: 2, formula: 1, temp: 'cold', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 3, type: 'bottle', water: 2, formula: 2, temp: 'warm', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 3, type: 'bottle', water: 1, formula: 2, temp: 'warm', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 3, type: 'cup',    water: 1, formula: 1, temp: 'warm', mixed: 'stirred', lid: 'straw'  },
+            // --- Tier 4: hot & full bottles ----------------------------
+            { difficulty: 4, type: 'cup',    water: 2, formula: 1, temp: 'hot',  mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 4, type: 'bottle', water: 2, formula: 0, temp: 'hot',  mixed: 'none',    lid: 'nipple' },
+            { difficulty: 4, type: 'bottle', water: 3, formula: 2, temp: 'warm', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 4, type: 'cup',    water: 1, formula: 2, temp: 'cold', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 4, type: 'bottle', water: 2, formula: 2, temp: 'hot',  mixed: 'shaken',  lid: 'nipple' },
+            // --- Tier 5: max complexity --------------------------------
+            { difficulty: 5, type: 'bottle', water: 3, formula: 3, temp: 'hot',  mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 5, type: 'cup',    water: 3, formula: 2, temp: 'hot',  mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 5, type: 'bottle', water: 1, formula: 3, temp: 'cold', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 5, type: 'cup',    water: 2, formula: 3, temp: 'cold', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 5, type: 'bottle', water: 3, formula: 2, temp: 'cold', mixed: 'shaken',  lid: 'nipple' }
+        ];
+
+        // Each level pulls from a sliding window of difficulties so it feels
+        // distinct but not repetitive. Level 1 only sees tier-1 recipes;
+        // level 5 mostly sees tier-4/5.
+        const LEVEL_RECIPE_TIERS = {
+            1: [1],
+            2: [1, 2],
+            3: [2, 3],
+            4: [3, 4],
+            5: [4, 5]
+        };
+
+        let lastRecipeKey = null;
+        function spawnOrder() {
+            const allowedTiers = LEVEL_RECIPE_TIERS[currentLevel] || [1, 2, 3, 4, 5];
+            let pool = RECIPES.filter(r => allowedTiers.includes(r.difficulty));
+            if (pool.length === 0) pool = RECIPES;
+
+            // Avoid repeating the exact same recipe back-to-back when possible.
+            if (pool.length > 1 && lastRecipeKey) {
+                const filtered = pool.filter(r => recipeKey(r) !== lastRecipeKey);
+                if (filtered.length > 0) pool = filtered;
+            }
+
+            const recipe = pool[Math.floor(Math.random() * pool.length)];
+            lastRecipeKey = recipeKey(recipe);
+            currentOrder = { ...recipe, name: (recipe.water + recipe.formula) + " OZ" };
+
+            // Re-shuffle the action grid every order so the player has to read
+            // the buttons rather than memorize positions.
+            shuffleActionGrid();
+        }
+
+        function recipeKey(r) {
+            return [r.type, r.water, r.formula, r.temp, r.mixed, r.lid].join('|');
+        }
+
+        // Fisher–Yates shuffle of the .grid-actions children. The TRASH/SERVE
+        // main-actions row is intentionally left in a fixed location so those
+        // critical actions stay predictable.
+        function shuffleActionGrid() {
+            const grid = document.querySelector('.grid-actions');
+            if (!grid) return;
+            const buttons = Array.from(grid.children);
+            for (let i = buttons.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [buttons[i], buttons[j]] = [buttons[j], buttons[i]];
+            }
+            const frag = document.createDocumentFragment();
+            buttons.forEach(b => frag.appendChild(b));
+            grid.appendChild(frag);
+        }
+
+        function createParticles(x, y, color, count=5) {
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4 - 2,
+                    life: 1.0, color: color
+                });
+            }
+        }
+
+        function spawnFloatText(x, y, text, color) {
+            floatTexts.push({ x, y, text, color, life: 1.0 });
+        }
+
+        function getExpectedStep() {
+            if (currentItem.isDirty) return 'wash';
+            if (currentItem.isWet) return 'dry';
+            if (currentItem.water < currentOrder.water) return 'water';
+            if (currentItem.formula < currentOrder.formula) return 'formula';
+            if (currentItem.temp !== currentOrder.temp) return 'temp';
+            if (currentItem.mixed !== currentOrder.mixed) return 'mix';
+            if (currentItem.lid !== currentOrder.lid) return 'lid';
+            return 'serve';
+        }
+
+        window.handleAction = function(act) {
+            if (gameState !== 'PLAY') return;
+
+            const cx = GAME_WIDTH / 2;
+            const cy = GAME_HEIGHT / 2 + 50;
+
+            if (act === 'trash') {
+                if (currentItem) {
+                    currentItem = null;
+                    createParticles(cx, cy, '#7f8c8d', 10);
+                }
+                return;
+            }
+
+            // Spawn new item
+            if (!currentItem) {
+                if (act === 'bottle' || act === 'cup') {
+                    currentItem = { type: act, isDirty: true, isWet: false, water: 0, formula: 0, temp: 'room', mixed: 'none', lid: null, ruined: false };
+                    
+                    if (act !== currentOrder.type) {
+                        currentItem.ruined = true;
+                        spawnFloatText(cx, cy, "WRONG CONTAINER!", "#e74c3c");
+                        document.getElementById('canvas-wrapper').style.transform = 'translate(-10px, 0)';
+                        setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(10px, 0)'; }, 50);
+                        setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(0, 0)'; }, 100);
+                    } else {
+                        createParticles(cx, cy, '#fff');
+                    }
+                } else {
+                    spawnFloatText(cx, cy, "GRAB CONTAINER FIRST!", "#e74c3c");
+                }
+                return;
+            }
+
+            if (currentItem.ruined) {
+                spawnFloatText(cx, cy, "RUINED! TRASH IT", "#e74c3c");
+                document.getElementById('canvas-wrapper').style.transform = 'translate(-5px, 0)';
+                setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(5px, 0)'; }, 50);
+                setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(0, 0)'; }, 100);
+                return;
+            }
+
+            const expectedStep = getExpectedStep();
+            let isCorrectAction = false;
+            let feedbackText = "";
+
+            switch(act) {
+                case 'wash':
+                    if (expectedStep === 'wash') {
+                        currentItem.isDirty = false;
+                        currentItem.isWet = true;
+                        createParticles(cx, cy, '#3498db', 10);
+                        spawnFloatText(cx, cy, "WASHED!", "#3498db");
+                        isCorrectAction = true;
+                    }
+                    break;
+
+                case 'dry':
+                    if (expectedStep === 'dry') {
+                        currentItem.isWet = false;
+                        createParticles(cx, cy, '#ecf0f1', 5);
+                        spawnFloatText(cx, cy, "DRIED!", "#f1c40f");
+                        isCorrectAction = true;
+                    }
+                    break;
+
+                case 'water':
+                    if (expectedStep === 'water') {
+                        currentItem.water++;
+                        currentItem.temp = 'room'; // Adding tap water resets temp
+                        createParticles(cx, cy, '#87CEEB');
+                        isCorrectAction = true;
+                    } else {
+                        if (currentItem.water >= currentOrder.water) feedbackText = "TOO MUCH WATER!";
+                    }
+                    break;
+
+                case 'formula':
+                    if (expectedStep === 'formula') {
+                        currentItem.formula++;
+                        currentItem.mixed = 'none'; // Unmixes if you add more
+                        createParticles(cx, cy, '#f1c40f');
+                        isCorrectAction = true;
+                    } else {
+                        if (currentItem.formula >= currentOrder.formula) feedbackText = "TOO MUCH FORMULA!";
+                    }
+                    break;
+
+                case 'heat':
+                case 'chill':
+                    if (expectedStep === 'temp') {
+                        if (act === 'heat') {
+                            if (currentItem.temp === 'cold') currentItem.temp = 'room';
+                            else if (currentItem.temp === 'room') { currentItem.temp = 'warm'; spawnFloatText(cx, cy, "WARM", "#e67e22"); }
+                            else if (currentItem.temp === 'warm') { currentItem.temp = 'hot'; spawnFloatText(cx, cy, "HOT!", "#e74c3c"); createParticles(cx, cy, '#e74c3c'); }
+                            else { feedbackText = "TOO HOT!"; }
+                        } else {
+                            if (currentItem.temp === 'hot') currentItem.temp = 'warm';
+                            else if (currentItem.temp === 'warm') currentItem.temp = 'room';
+                            else if (currentItem.temp === 'room') { currentItem.temp = 'cold'; spawnFloatText(cx, cy, "COLD", "#3498db"); createParticles(cx, cy, '#3498db');}
+                            else { feedbackText = "TOO COLD!"; }
+                        }
+                        if (!feedbackText) isCorrectAction = true;
+                    }
+                    break;
+
+                case 'shake':
+                case 'stir':
+                    if (expectedStep === 'mix') {
+                        if (act === 'shake' && currentOrder.mixed === 'shaken') {
+                            currentItem.mixed = 'shaken';
+                            spawnFloatText(cx, cy, "SHAKEN!", "#fff");
+                            document.getElementById('canvas-wrapper').style.transform = 'translate(5px, 5px)';
+                            setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(0, 0)'; }, 50);
+                            isCorrectAction = true;
+                        } else if (act === 'stir' && currentOrder.mixed === 'stirred') {
+                            currentItem.mixed = 'stirred';
+                            spawnFloatText(cx, cy, "STIRRED!", "#fff");
+                            isCorrectAction = true;
+                        } else {
+                            feedbackText = "WRONG MIX!";
+                        }
+                    }
+                    break;
+
+                case 'nipple':
+                case 'straw':
+                    if (expectedStep === 'lid') {
+                        if (act === currentOrder.lid) {
+                            currentItem.lid = act;
+                            isCorrectAction = true;
+                        } else {
+                            feedbackText = "WRONG LID!";
+                        }
+                    }
+                    break;
+
+                case 'serve':
+                    if (expectedStep === 'serve') {
+                        serveItem();
+                        return;
+                    } else {
+                        feedbackText = "NOT READY TO SERVE!";
+                    }
+                    break;
+                    
+                case 'bottle':
+                case 'cup':
+                    feedbackText = "ALREADY HAVE CONTAINER!";
+                    break;
+            }
+
+            if (!isCorrectAction) {
+                currentItem.ruined = true;
+                if (!feedbackText) feedbackText = "OUT OF ORDER!";
+                spawnFloatText(cx, cy, feedbackText, "#e74c3c");
+                
+                document.getElementById('canvas-wrapper').style.transform = 'translate(-10px, 0)';
+                setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(10px, 0)'; }, 50);
+                setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(0, 0)'; }, 100);
+                
+                bunnyState = 'nervous';
+                bunnyStateTimer = performance.now();
+            }
+        };
+
+        function serveItem() {
+            const cx = GAME_WIDTH / 2;
+            const cy = GAME_HEIGHT / 2 + 50;
+
+            // Success!
+            score++;
+            scoreEl.innerText = score + "/" + targetOrders;
+            currentItem = null;
+            
+            if (score >= targetOrders) {
+                // Level Complete!
+                gameState = 'GAMEOVER';
+
+                // Strict > thresholds per SCORING_GUIDE.md §2.
+                let finalStars = 1;
+                if (timeLeft > 10000) finalStars = 2;
+                if (timeLeft > 20000) finalStars = 3;
+                earnedStars = finalStars;
+
+                document.getElementById('game-over-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
+                gameOverScreen.classList.remove('bg-red-900/95');
+                gameOverScreen.classList.add('bg-purple-900/95');
+                document.getElementById('final-score').innerText = score + "/" + targetOrders;
+
+                const finalStarsContainer = document.getElementById('final-stars-display');
+                if (finalStarsContainer) {
+                    const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
+                    finalStarSpans.forEach((star, index) => {
+                        if (index < finalStars) {
+                            star.classList.add('earned');
+                            star.classList.remove('empty');
+                        } else {
+                            star.classList.remove('earned');
+                            star.classList.add('empty');
+                        }
+                    });
+                }
+
+                const nextBtn = document.getElementById('next-level-btn');
+                if (nextBtn) {
+                    if (currentLevel < 5) {
+                        nextBtn.classList.remove('hidden');
+                    } else {
+                        nextBtn.classList.add('hidden');
+                    }
+                }
+
+                // Win → "Play Again" (replay for a higher star count).
+                const restartBtn = document.getElementById('restart-btn');
+                if (restartBtn) restartBtn.innerText = 'Play Again';
+
+                postLevelResult(score, finalStars, 'win');
+                gameOverScreen.classList.remove('hidden');
+            } else {
+                spawnFloatText(GAME_WIDTH - 80, GAME_HEIGHT - 100, "YUM!", "#2ecc71");
+                createParticles(GAME_WIDTH - 80, GAME_HEIGHT - 100, '#f1c40f', 20);
+                spawnOrder();
+                
+                bunnyState = 'happy';
+                bunnyStateTimer = performance.now();
+            }
+        }
+
+        function startGame() {
+            const config = LEVEL_CONFIGS[currentLevel - 1];
+            targetOrders = config.targetOrders;
+            timeLimit = config.timeLimit;
+
+            score = 0;
+            timeLeft = timeLimit;
+            earnedStars = 0;
+            resultPosted = false;
+            // HUD inits to 0 stars (no flash) — see SCORING_GUIDE.md §1.4.
+            document.getElementById('star-1').className = 'star';
+            document.getElementById('star-2').className = 'star';
+            document.getElementById('star-3').className = 'star';
+            currentItem = null;
+            particles = [];
+            floatTexts = [];
+
+            scoreEl.innerText = score + "/" + targetOrders;
+            spawnOrder();
+
+            gameState = 'PLAY';
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        document.getElementById('start-btn').addEventListener('click', startGame);
+        document.getElementById('restart-btn').addEventListener('click', startGame);
+        const nextBtn = document.getElementById('next-level-btn');
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                // Navigation only; parent handles the level swap.
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: currentLevel }, '*');
+            });
+        }
+
+        function update(dt) {
+            if (gameState !== 'PLAY') return;
+
+            timeLeft -= dt;
+            
+            let displayTime = Math.max(0, timeLeft / 1000).toFixed(1);
+            timerEl.innerText = displayTime + "s";
+            
+            if (timeLeft <= 10000) timerEl.classList.add('warning');
+            else timerEl.classList.remove('warning');
+
+            // Live HUD preview only — final stars are recomputed in serveItem()
+            // when the round completes. Show the maximum tier the player is
+            // currently on track for if they finish right now (with strict > per
+            // SCORING_GUIDE.md §2). Player only "has" 1 star if they actually
+            // make it to targetOrders, so we display 0 until then.
+            let previewStars = 0;
+            if (score >= targetOrders) previewStars = 1;
+            if (score >= targetOrders && timeLeft > 10000) previewStars = 2;
+            if (score >= targetOrders && timeLeft > 20000) previewStars = 3;
+
+            if (previewStars !== earnedStars) {
+                earnedStars = previewStars;
+                document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
+                document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
+                document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
+            }
+
+            if (timeLeft <= 0) {
+                gameState = 'GAMEOVER';
+                document.getElementById('game-over-screen').querySelector('h1').innerText = "TIME'S UP!";
+                gameOverScreen.classList.remove('bg-purple-900/95');
+                gameOverScreen.classList.add('bg-red-900/95');
+                document.getElementById('final-score').innerText = score + "/" + targetOrders;
+
+                const finalStarsContainer = document.getElementById('final-stars-display');
+                if (finalStarsContainer) {
+                    const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
+                    finalStarSpans.forEach((star) => {
+                        star.classList.remove('earned');
+                        star.classList.add('empty');
+                    });
+                }
+
+                const nextBtn = document.getElementById('next-level-btn');
+                if (nextBtn) {
+                    nextBtn.classList.add('hidden');
+                }
+
+                // Fail → "Try Again".
+                const restartBtn = document.getElementById('restart-btn');
+                if (restartBtn) restartBtn.innerText = 'Try Again';
+
+                postLevelResult(score, 0, 'fail');
+
+                gameOverScreen.classList.remove('hidden');
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            for (let i = floatTexts.length - 1; i >= 0; i--) {
+                let ft = floatTexts[i];
+                ft.y -= 1;
+                ft.life -= 0.015;
+                if (ft.life <= 0) floatTexts.splice(i, 1);
+            }
+        }
+
+        // --- Drawing ---
+
+        function drawBunny(x, y) {
+            ctx.save();
+            ctx.translate(x + 25, y + 30); // Center translation for head
+            
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.arc(0, 0, 25, 0, Math.PI*2); ctx.fill(); // Head
+            ctx.beginPath(); ctx.ellipse(-10, -30, 8, 20, -0.2, 0, Math.PI*2); ctx.fill(); // Ear L
+            ctx.beginPath(); ctx.ellipse(10, -30, 8, 20, 0.2, 0, Math.PI*2); ctx.fill(); // Ear R
+            
+            let timeNow = performance.now();
+            
+            if (timeNow - bunnyStateTimer > 1500 && bunnyState !== 'awake') {
+                bunnyState = 'awake';
+            }
+
+            if (bunnyState === 'nervous') {
+                // Nervous eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(-8, 0, 6, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(8, 0, 6, 0, Math.PI*2); ctx.fill();
+                
+                ctx.fillStyle = '#c0392b';
+                let shakeX = (Math.random() - 0.5) * 2;
+                let shakeY = (Math.random() - 0.5) * 2;
+                ctx.beginPath(); ctx.arc(-8 + shakeX, shakeY, 2, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(8 + shakeX, shakeY, 2, 0, Math.PI*2); ctx.fill();
+
+                // Nervous mouth
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-4, 12); ctx.lineTo(0, 10); ctx.lineTo(4, 12); ctx.stroke();
+
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 9, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
+
+                // Sweat drop
+                ctx.fillStyle = '#8fd3f4';
+                ctx.beginPath(); 
+                ctx.arc(15, -6, 3, 0, Math.PI, false); 
+                ctx.lineTo(15, -11); 
+                ctx.closePath();
+                ctx.fill();
+            } else if (bunnyState === 'happy') {
+                // Happy eyes
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-12, 0); ctx.quadraticCurveTo(-8, -5, -4, 0); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(4, 0); ctx.quadraticCurveTo(8, -5, 12, 0); ctx.stroke();
+                
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 9, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
+
+                // Smile
+                ctx.beginPath(); ctx.moveTo(-6, 12); ctx.quadraticCurveTo(0, 18, 6, 12); ctx.stroke();
+                
+                // Exclamation
+                ctx.fillStyle = '#ffdf00';
+                ctx.font = '14px "Press Start 2P"';
+                ctx.fillText('!', 20, -10);
+            } else {
+                // Awake eyes (circles)
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(-8, 0, 3, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(8, 0, 3, 0, Math.PI*2); ctx.fill();
+                
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 11, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 8, 3, 0, Math.PI*2); ctx.fill();
+            }
+            
+            ctx.restore();
+        }
+
+        function drawItem(item, x, y) {
+            if (!item) return;
+
+            const isBottle = item.type === 'bottle';
+            const w = isBottle ? 30 : 40;
+            const h = isBottle ? 60 : 35;
+            const bx = x - w/2;
+            const by = y - h;
+
+            // Liquid Level & Color
+            let fillHeight = (item.water / 3) * (h - 5);
+            let liqColor = '#87CEEB'; // water
+            if (item.formula > 0) {
+                // Blend to yellow/white based on mix
+                if (item.mixed !== 'none') liqColor = '#fdf5e6'; // Milk
+                else liqColor = '#e6ccaa'; // Unmixed yellowy
+            }
+
+            // Glass Back
+            ctx.fillStyle = 'rgba(236, 240, 241, 0.4)';
+            ctx.fillRect(bx, by, w, h);
+            
+            // Liquid
+            if (fillHeight > 0) {
+                ctx.fillStyle = liqColor;
+                ctx.fillRect(bx, by + h - fillHeight, w, fillHeight);
+                
+                // Unmixed powder clumps
+                if (item.formula > 0 && item.mixed === 'none') {
+                    ctx.fillStyle = '#fff';
+                    for(let i=0; i<item.formula*2; i++) {
+                        ctx.fillRect(bx + 5 + (i*7)%w, by + h - fillHeight + (i*5)%fillHeight, 4, 4);
+                    }
+                }
+            }
+
+            // Glass Front/Outline
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(bx, by, w, h);
+            // Measurement lines
+            ctx.beginPath(); ctx.moveTo(bx, by+h*0.33); ctx.lineTo(bx+5, by+h*0.33); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(bx, by+h*0.66); ctx.lineTo(bx+5, by+h*0.66); ctx.stroke();
+
+            // States
+            if (item.isDirty) {
+                ctx.fillStyle = '#8b4513';
+                ctx.beginPath(); ctx.arc(bx+w*0.3, by+h*0.4, 4, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(bx+w*0.8, by+h*0.7, 5, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(bx+w*0.5, by+h*0.2, 3, 0, Math.PI*2); ctx.fill();
+            }
+            if (item.isWet) {
+                ctx.fillStyle = '#3498db';
+                ctx.fillRect(bx+w*0.2, by+h*0.3, 2, 6);
+                ctx.fillRect(bx+w*0.7, by+h*0.5, 2, 5);
+            }
+
+            // Temp Aura
+            if (item.temp === 'hot') {
+                ctx.strokeStyle = 'rgba(231, 76, 60, 0.5)';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(bx-4, by-4, w+8, h+8);
+                // Steam
+                if(Math.floor(performance.now()/200)%2===0) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.fillRect(bx+w/2, by-15, 3, 10);
+                }
+            } else if (item.temp === 'warm') {
+                ctx.strokeStyle = 'rgba(230, 126, 34, 0.5)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(bx-2, by-2, w+4, h+4);
+            } else if (item.temp === 'cold') {
+                ctx.strokeStyle = 'rgba(52, 152, 219, 0.5)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(bx-2, by-2, w+4, h+4);
+            }
+
+            // Lids
+            if (item.lid === 'nipple') {
+                ctx.fillStyle = '#f39c12'; // Ring
+                ctx.fillRect(bx - 2, by - 6, w + 4, 6);
+                ctx.fillStyle = '#f1c27d'; // Nipple
+                ctx.beginPath(); ctx.arc(bx + w/2, by - 6, w*0.3, Math.PI, 0); ctx.fill();
+            } else if (item.lid === 'straw') {
+                ctx.fillStyle = '#bdc3c7'; // flat lid
+                ctx.fillRect(bx - 2, by - 4, w + 4, 4);
+                ctx.strokeStyle = '#e74c3c'; // straw
+                ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.moveTo(bx + w/2, by); ctx.lineTo(bx + w*0.8, by - 20); ctx.stroke();
+            }
+
+            // Ruined visual
+            if (item.ruined) {
+                ctx.strokeStyle = 'rgba(231, 76, 60, 0.9)';
+                ctx.lineWidth = 6;
+                ctx.beginPath(); ctx.moveTo(bx - 5, by - 5); ctx.lineTo(bx + w + 5, by + h + 5); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(bx + w + 5, by - 5); ctx.lineTo(bx - 5, by + h + 5); ctx.stroke();
+            }
+        }
+
+        function drawOrderTicket() {
+            if (!currentOrder) return;
+            
+            ctx.fillStyle = '#fdf5e6';
+            ctx.fillRect(10, 40, 160, 200);
+            ctx.fillStyle = '#e67e22'; // pin
+            ctx.fillRect(85, 35, 10, 10);
+
+            ctx.fillStyle = '#111';
+            ctx.textAlign = 'left';
+
+            // Title is now the total ounces (water + formula). Larger font
+            // makes the order size pop; the rest of the spec lives in the
+            // checklist below.
+            ctx.font = '16px "Press Start 2P"';
+            ctx.fillText(currentOrder.name, 15, 65);
+
+            ctx.font = '10px "Press Start 2P"';
+            ctx.fillRect(15, 80, 140, 2); // divider
+
+            // Checklist helper function
+            function drawCheck(y, text, condition) {
+                ctx.strokeStyle = '#111';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(15, y-8, 8, 8);
+                if (condition) {
+                    ctx.fillStyle = '#27ae60';
+                    ctx.fillText('v', 15, y);
+                }
+                ctx.fillStyle = '#333';
+                ctx.fillText(text, 28, y);
+            }
+
+            // Evaluate current progress
+            const c = currentItem;
+            let hasItem = c !== null;
+            let yPos = 100;
+
+            drawCheck(yPos, currentOrder.type.toUpperCase(), hasItem && c.type === currentOrder.type);
+            yPos += 16;
+            
+            drawCheck(yPos, "WASH & DRY", hasItem && !c.isDirty && !c.isWet);
+            yPos += 16;
+
+            if (currentOrder.water > 0) {
+                drawCheck(yPos, currentOrder.water + " WATER", hasItem && c.water === currentOrder.water);
+                yPos += 16;
+            }
+
+            if (currentOrder.formula > 0) {
+                drawCheck(yPos, currentOrder.formula + " FORMULA", hasItem && c.formula === currentOrder.formula);
+                yPos += 16;
+            }
+
+            if (currentOrder.temp !== 'room') {
+                drawCheck(yPos, currentOrder.temp.toUpperCase(), hasItem && c.temp === currentOrder.temp);
+                yPos += 16;
+            }
+            
+            if (currentOrder.mixed !== 'none') {
+                drawCheck(yPos, currentOrder.mixed.toUpperCase(), hasItem && c.mixed === currentOrder.mixed);
+                yPos += 16;
+            }
+            
+            if (currentOrder.lid) {
+                drawCheck(yPos, currentOrder.lid.toUpperCase(), hasItem && c.lid === currentOrder.lid);
+            }
+        }
+
+        function draw() {
+            // Kitchen Background
+            ctx.fillStyle = '#2c3e50';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            
+            // Checkerboard Wall
+            for(let i=0; i<GAME_WIDTH/20; i++) {
+                for(let j=0; j<GAME_HEIGHT/2/20; j++) {
+                    ctx.fillStyle = (i+j)%2===0 ? '#16a085' : '#1abc9c';
+                    ctx.fillRect(i*20, j*20, 20, 20);
+                }
+            }
+
+            // Countertop
+            const counterY = GAME_HEIGHT / 2 + 20;
+            ctx.fillStyle = '#7f8c8d'; // Stainless steel
+            ctx.fillRect(0, counterY, GAME_WIDTH, GAME_HEIGHT - counterY);
+            ctx.fillStyle = '#95a5a6';
+            ctx.fillRect(0, counterY, GAME_WIDTH, 10);
+
+            if (gameState === 'START') return;
+
+            // Draw Order
+            drawOrderTicket();
+
+            // Draw Bunny Chef
+            drawBunny(GAME_WIDTH - 100, counterY - 50);
+
+            // Draw Current Item on Counter
+            if (currentItem) {
+                // Drop shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath(); ctx.ellipse(GAME_WIDTH/2, counterY + 80, 25, 5, 0, 0, Math.PI*2); ctx.fill();
+                
+                drawItem(currentItem, GAME_WIDTH / 2, counterY + 80);
+            }
+
+            // Particles & Floats
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = Math.max(0, p.life);
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), 4, 4); 
+            });
+            ctx.globalAlpha = 1.0;
+
+            floatTexts.forEach(ft => {
+                ctx.fillStyle = ft.color;
+                ctx.globalAlpha = Math.max(0, ft.life);
+                ctx.font = '12px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.fillText(ft.text, ft.x, ft.y);
+            });
+            ctx.globalAlpha = 1.0;
+        }
+
+        function gameLoop(timestamp) {
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+            if (dt > 100) dt = 16; 
+
+            update(dt);
+            draw();
+
+            if (gameState === 'PLAY') {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Boot
+        draw();
+
+        if (urlParams.get('autoStart') === 'true') {
+            startGame();
+        }
+
+    </script>
+</body>
+</html>

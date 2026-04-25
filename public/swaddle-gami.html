@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Swaddle-gami Arcade</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            touch-action: none;
+            font-family: 'Press Start 2P', monospace;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 600px;
+            margin: 0 auto;
+            background: #1a1525; /* Dark nursery purple */
+            box-shadow: 0 0 30px rgba(255, 105, 180, 0.15);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+        }
+
+        .scanlines {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.25) 50%,
+                rgba(0,0,0,0.25)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .crt-flicker {
+            animation: flicker 0.15s infinite;
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.95; }
+            50% { opacity: 1; }
+            100% { opacity: 0.95; }
+        }
+
+        .text-glow {
+            text-shadow: 2px 2px 0px #d90077, -1px -1px 0px #ff66b2;
+        }
+
+        .success-glow {
+            text-shadow: 2px 2px 0px #27ae60, -1px -1px 0px #2ecc71;
+            animation: pulse-green 0.5s infinite alternate;
+        }
+
+        .star { color: #555; font-size: 26px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.5); }
+            100% { transform: scale(1); }
+        }
+
+        @keyframes pulse-green {
+            from { transform: scale(1); }
+            to { transform: scale(1.05); }
+        }
+
+        /* Action Buttons */
+        .controls-tray {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 100px;
+            background: #0d0a14;
+            border-top: 4px solid #332b47;
+            z-index: 20;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 0 10px;
+        }
+
+        .action-btn {
+            background: #2c243b;
+            border: 3px solid #ff99cc;
+            color: #ff99cc;
+            font-size: 12px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            text-transform: uppercase;
+            box-shadow: 0 4px 0 #995c7a;
+            transition: transform 0.1s, box-shadow 0.1s;
+            cursor: pointer;
+        }
+        
+        .action-btn:active, .action-btn.active {
+            transform: translateY(4px);
+            box-shadow: 0 0px 0 #995c7a;
+            background: #ff99cc;
+            color: #2c243b;
+        }
+
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+    <div id="game-container" class="crt-flicker">
+        <canvas id="gameCanvas"></canvas>
+        <div class="scanlines"></div>
+
+        <!-- HUD -->
+        <div id="hud" class="absolute top-0 left-0 w-full p-4 flex justify-between items-start z-10 text-white text-[10px] sm:text-xs tracking-wider pointer-events-none">
+            <button id="hud-exit-btn" class="absolute top-2 left-2 bg-red-500/80 hover:bg-red-600 text-white rounded-full w-8 h-8 flex items-center justify-center pointer-events-auto border-2 border-white font-bold z-[30] text-[10px] sm:text-xs">X</button>
+            <div class="flex flex-col gap-2 ml-10">
+                <div>SCORE: <span id="score-display" class="text-green-400">0</span></div>
+            </div>
+            <div class="text-right flex flex-col gap-2 relative pointer-events-none items-end">
+                <div id="star-container" class="flex gap-1 justify-end mb-1">
+                    <span id="star-1" class="star">★</span>
+                    <span id="star-2" class="star">★</span>
+                    <span id="star-3" class="star">★</span>
+                </div>
+                <div>TIME: <span id="timer-display" class="text-white">60.0</span>s</div>
+                <div>PUZZLES: <span id="level-display" class="text-white">0</span></div>
+            </div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 p-4 text-center">
+            <h1 class="text-3xl sm:text-4xl text-white mb-6 text-glow leading-loose">SWADDLE<br>-GAMI-</h1>
+            <p class="text-gray-300 text-[10px] sm:text-xs mb-8 leading-loose uppercase">
+                Drag pieces to the dotted outline.<br>
+                Tap pieces to select them.<br>
+                Use FOLD & SPIN to match shapes!
+            </p>
+            <div class="flex flex-col gap-4">
+                <button id="start-btn" class="bg-pink-600 hover:bg-pink-500 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase animate-pulse cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Insert Coin
+                </button>
+                <button id="start-exit-btn" class="bg-transparent text-gray-300 hover:text-white border-2 border-gray-400 hover:border-white px-4 py-2 rounded text-xs uppercase cursor-pointer transition-colors">
+                    Back
+                </button>
+            </div>
+        </div>
+        
+        <!-- Next Level Screen -->
+        <div id="next-level-screen" class="absolute inset-0 bg-purple-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center">
+            <h1 class="text-3xl text-white mb-4 success-glow">PERFECT!</h1>
+            <p class="text-pink-300 text-xs mb-8 uppercase">The baby is warm and happy.</p>
+            <button id="next-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
+                Next Puzzle
+            </button>
+            <button class="exit-game-btn mt-4 bg-transparent text-white hover:text-gray-300 border-2 border-white px-6 py-3 rounded text-xs uppercase cursor-pointer transition-all">
+                Exit Game
+            </button>
+        </div>
+
+        <!-- Final Win Screen -->
+        <div id="win-screen" class="absolute inset-0 bg-pink-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center">
+            <h1 class="text-3xl text-white mb-4 text-glow">TIME'S UP!</h1>
+            <div id="final-stars-display" class="flex gap-2 mb-6">
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+                <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+            </div>
+            <p class="text-white text-lg mb-8 font-bold uppercase">SCORE: <span id="final-score">0</span></p>
+            <div class="flex flex-col gap-4 w-full max-w-[200px] mx-auto pointer-events-auto">
+                <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
+                    Play Again
+                </button>
+                <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Next Level
+                </button>
+                <button class="exit-game-btn bg-transparent text-white hover:text-gray-300 border-2 border-white px-6 py-3 rounded text-xs uppercase cursor-pointer transition-all">
+                    Save & Exit
+                </button>
+            </div>
+        </div>
+
+        <!-- UI Controls (Visible during gameplay) -->
+        <div id="controls-tray" class="controls-tray hidden">
+            <button id="btn-spin" class="action-btn">SPIN</button>
+            <button id="btn-fold" class="action-btn">FOLD</button>
+        </div>
+    </div>
+
+    <script>
+        // --- Game Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const GAME_WIDTH = 400;
+        const GAME_HEIGHT = 700;
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // UI Nodes
+        const startScreen = document.getElementById('start-screen');
+        const nextLevelScreen = document.getElementById('next-level-screen');
+        const winScreen = document.getElementById('win-screen');
+        const controlsTray = document.getElementById('controls-tray');
+        const levelDisplayEl = document.getElementById('level-display');
+        const scoreEl = document.getElementById('score-display');
+        const timerEl = document.getElementById('timer-display');
+
+        // Game State Variables
+        const urlParams = new URLSearchParams(window.location.search);
+        const GAME_ID = 'swaddle_gami';
+        // Per SCORING_GUIDE.md §6: clamp ?level= to 1..5.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevelIndex = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
+        const puzzlesRequired = currentLevelIndex + 1; // 2 to 6
+
+        let gameState = 'START';
+        let puzzlesCompleted = 0;
+        let lastTime = 0;
+        let timeLeft = puzzlesRequired * 25000;
+        let earnedStars = 0;
+        let totalScore = 0;
+        let resultPosted = false;
+
+        // Canonical score (SCORING_GUIDE.md §3): puzzlesSolved*100 + secondsRemaining.
+        function canonicalScore() {
+            return puzzlesCompleted * 100 + Math.max(0, Math.floor(timeLeft / 1000));
+        }
+        function postResult(stars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
+            window.parent.postMessage({
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: currentLevelIndex,
+                stars: stars,
+                score: canonicalScore(),
+                outcome: outcome
+            }, '*');
+        }
+        
+        let pieces = [];
+        let slots = [];
+        
+        let selectedPiece = null;
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        
+        let bunnyState = 'awake';
+        let bunnyStateTimer = 0;
+
+        // --- Interaction Logic ---
+        function getPointerPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: (clientX - rect.left) * (GAME_WIDTH / rect.width),
+                y: (clientY - rect.top) * (GAME_HEIGHT / rect.height)
+            };
+        }
+
+        function handlePointerDown(e) {
+            if (gameState !== 'PLAY') return;
+            if (e.target === canvas) e.preventDefault();
+            const pos = getPointerPos(e);
+
+            // Find closest piece to touch
+            let closest = null;
+            let minDist = 90; // Touch radius
+
+            // Iterate backwards to pick top-most piece
+            for (let i = pieces.length - 1; i >= 0; i--) {
+                const p = pieces[i];
+                const currentShapeId = PAPER_TYPES[p.type].sequence[p.fold];
+                const pCenter = getShapeCenter(currentShapeId, p.rot);
+                const visualPx = p.x + pCenter.x;
+                const visualPy = p.y + pCenter.y;
+                
+                const dist = Math.hypot(visualPx - pos.x, visualPy - pos.y);
+                if (dist < minDist) {
+                    minDist = dist;
+                    closest = p;
+                }
+            }
+
+            if (closest) {
+                selectedPiece = closest;
+                isDragging = true;
+                dragOffset.x = closest.x - pos.x;
+                dragOffset.y = closest.y - pos.y;
+                
+                // Pull piece to front
+                pieces = pieces.filter(p => p !== closest);
+                pieces.push(closest);
+                
+                // Unlock if it was snapped
+                closest.isLocked = false;
+                checkSnaps(); // Un-fill the slot immediately
+            }
+        }
+
+        function handlePointerMove(e) {
+            if (!isDragging || !selectedPiece || gameState !== 'PLAY') return;
+            if (e.target === canvas) e.preventDefault();
+            const pos = getPointerPos(e);
+            selectedPiece.x = pos.x + dragOffset.x;
+            selectedPiece.y = pos.y + dragOffset.y;
+        }
+
+        function handlePointerUp(e) {
+            if (!isDragging || gameState !== 'PLAY') return;
+            if (e.target === canvas) e.preventDefault();
+            isDragging = false;
+            checkSnaps();
+        }
+
+        // Add Listeners
+        canvas.addEventListener('touchstart', handlePointerDown, {passive: false});
+        canvas.addEventListener('touchmove', handlePointerMove, {passive: false});
+        canvas.addEventListener('touchend', handlePointerUp, {passive: false});
+        canvas.addEventListener('mousedown', handlePointerDown);
+        canvas.addEventListener('mousemove', handlePointerMove);
+        canvas.addEventListener('mouseup', handlePointerUp);
+
+        // UI Buttons
+        document.getElementById('btn-spin').addEventListener('click', (e) => {
+            e.preventDefault();
+            if (selectedPiece && gameState === 'PLAY') {
+                selectedPiece.rot = (selectedPiece.rot + 1) % 4;
+                selectedPiece.isLocked = false;
+                checkSnaps();
+                bunnyState = 'awake';
+                bunnyStateTimer = performance.now();
+            }
+        });
+
+        document.getElementById('btn-fold').addEventListener('click', (e) => {
+            e.preventDefault();
+            if (selectedPiece && gameState === 'PLAY') {
+                const seq = PAPER_TYPES[selectedPiece.type].sequence;
+                selectedPiece.fold = (selectedPiece.fold + 1) % seq.length;
+                selectedPiece.isLocked = false;
+                checkSnaps();
+                bunnyState = 'awake';
+                bunnyStateTimer = performance.now();
+            }
+        });
+
+        document.getElementById('start-btn').addEventListener('click', () => initGame(true));
+        document.getElementById('restart-btn').addEventListener('click', () => initGame(true));
+        
+        const nextLvlBtn = document.getElementById('next-level-btn');
+        if (nextLvlBtn) {
+            nextLvlBtn.addEventListener('click', () => {
+                // Navigation-only per SCORING_GUIDE.md §1.
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: currentLevelIndex }, '*');
+            });
+        }
+        document.getElementById('next-btn').addEventListener('click', () => initGame(false));
+
+        const exitGame = () => {
+            gameState = 'GAMEOVER';
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
+        };
+        const startExitBtn = document.getElementById('start-exit-btn');
+        if (startExitBtn) startExitBtn.addEventListener('click', exitGame);
+        
+        const hudExitBtn = document.getElementById('hud-exit-btn');
+        if (hudExitBtn) hudExitBtn.addEventListener('click', exitGame);
+
+        document.querySelectorAll('.exit-game-btn').forEach(btn => btn.addEventListener('click', exitGame));
+
+        const SHAPES = [
+            /* 0: Large Square (120x120) */ { pts: [[-60,-60], [60,-60], [60,60], [-60,60]] },
+            /* 1: Large Tri (120x120)    */ { pts: [[-60,-60], [60,60], [-60,60]] },
+            /* 2: Rect (120x60)          */ { pts: [[-60,-30], [60,-30], [60,30], [-60,30]] },
+            /* 3: Square (60x60)         */ { pts: [[-30,-30], [30,-30], [30,30], [-30,30]] },
+            /* 4: Small Tri (60x60)      */ { pts: [[-30,-30], [30,30], [-30,30]] }
+        ];
+
+        // Fold sequences (What shape it becomes when you hit FOLD)
+        const PAPER_TYPES = [
+            { sequence: [0, 1] },       // Type 0: Large Square -> Large Triangle
+            { sequence: [2, 3, 4] }     // Type 1: Rectangle -> Square -> Small Triangle
+        ];
+
+        // Levels Database — 20 unique tangram-inspired puzzles. The total puzzles
+        // needed across L1..L5 is 2+3+4+5+6 = 20, and each level draws a
+        // non-overlapping slice (see `puzzleOffset` below), so no puzzle repeats
+        // anywhere in a full play-through.
+        const LEVELS = [
+            // --- L1 (offset 0, 2 puzzles): warm-up shapes ---
+            {
+                name: "BUNNY",
+                slots: [
+                    { x: 200, y: 250, shape: 3, rot: 0 }, // Body
+                    { x: 200, y: 160, shape: 2, rot: 1 }, // Ears
+                    { x: 140, y: 250, shape: 4, rot: 1 }  // Tail
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#ff7eb3', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#a18cd1', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#fbc2eb', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "FISH",
+                slots: [
+                    { x: 200, y: 250, shape: 1, rot: 0 }, // Body
+                    { x: 110, y: 250, shape: 3, rot: 0 }, // Tail
+                    { x: 170, y: 160, shape: 4, rot: 2 }  // Fin
+                ],
+                pieces: [
+                    { type: 0, x: 100, y: 450, color: '#ff9a9e', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#84fab0', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#8fd3f4', fold: 0, rot: 0 }
+                ]
+            },
+            // --- L2 (offset 2, 3 puzzles) ---
+            {
+                name: "HOUSE",
+                slots: [
+                    { x: 200, y: 300, shape: 2, rot: 0 }, // Base
+                    { x: 170, y: 240, shape: 4, rot: 0 }, // Roof Left
+                    { x: 230, y: 240, shape: 4, rot: 1 }  // Roof Right
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#fccb90', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#d57eeb', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#e0c3fc', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "PINWHEEL",
+                slots: [
+                    { x: 230, y: 170, shape: 4, rot: 0 }, // Top Right
+                    { x: 230, y: 230, shape: 4, rot: 1 }, // Bottom Right
+                    { x: 170, y: 230, shape: 4, rot: 2 }, // Bottom Left
+                    { x: 170, y: 170, shape: 4, rot: 3 }  // Top Left
+                ],
+                pieces: [
+                    { type: 1, x: 50, y: 450, color: '#ff0844', fold: 0, rot: 0 },
+                    { type: 1, x: 150, y: 450, color: '#ffb199', fold: 0, rot: 0 },
+                    { type: 1, x: 250, y: 450, color: '#0fd850', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#f9f047', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "CAT",
+                slots: [
+                    { x: 200, y: 240, shape: 3, rot: 0 }, // Head
+                    { x: 175, y: 195, shape: 4, rot: 3 }, // Left ear
+                    { x: 225, y: 195, shape: 4, rot: 0 }  // Right ear
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#ffd166', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#ef476f', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#06d6a0', fold: 0, rot: 0 }
+                ]
+            },
+            // --- L3 (offset 5, 4 puzzles) ---
+            {
+                name: "SAILBOAT",
+                slots: [
+                    { x: 200, y: 290, shape: 2, rot: 0 }, // Hull
+                    { x: 180, y: 220, shape: 1, rot: 0 }, // Sail
+                    { x: 250, y: 200, shape: 3, rot: 0 }  // Crow's nest
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#118ab2', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#fdfd96', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ffadad', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "ARROW",
+                slots: [
+                    { x: 170, y: 240, shape: 2, rot: 0 }, // Shaft
+                    { x: 240, y: 215, shape: 4, rot: 1 }, // Arrowhead top
+                    { x: 240, y: 265, shape: 4, rot: 0 }  // Arrowhead bottom
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#9b5de5', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#f15bb5', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#fee440', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "TREE",
+                slots: [
+                    { x: 200, y: 290, shape: 3, rot: 0 }, // Trunk
+                    { x: 170, y: 235, shape: 4, rot: 3 }, // Left leaves
+                    { x: 230, y: 235, shape: 4, rot: 0 }  // Right leaves
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#8d6e63', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#43aa8b', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#90be6d', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "BOWTIE",
+                slots: [
+                    { x: 140, y: 240, shape: 1, rot: 0 }, // Left wing
+                    { x: 260, y: 240, shape: 1, rot: 2 }, // Right wing
+                    { x: 200, y: 240, shape: 3, rot: 0 }  // Knot
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#e63946', fold: 0, rot: 0 },
+                    { type: 0, x: 230, y: 450, color: '#ffafcc', fold: 0, rot: 0 },
+                    { type: 1, x: 340, y: 450, color: '#a8dadc', fold: 0, rot: 0 }
+                ]
+            },
+            // --- L4 (offset 9, 5 puzzles) ---
+            {
+                name: "BIRD",
+                slots: [
+                    { x: 200, y: 250, shape: 1, rot: 0 }, // Body
+                    { x: 165, y: 200, shape: 4, rot: 1 }, // Wing up
+                    { x: 250, y: 290, shape: 4, rot: 3 }  // Wing down
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#3a86ff', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#8338ec', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ffbe0b', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "CRYSTAL",
+                slots: [
+                    { x: 200, y: 195, shape: 4, rot: 0 }, // Top facet
+                    { x: 200, y: 250, shape: 1, rot: 0 }, // Body
+                    { x: 200, y: 305, shape: 4, rot: 2 }  // Bottom facet
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#80ed99', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#22c55e', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#0ea5e9', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "CASTLE",
+                slots: [
+                    { x: 200, y: 290, shape: 2, rot: 0 }, // Base wall
+                    { x: 160, y: 235, shape: 3, rot: 0 }, // Left tower
+                    { x: 240, y: 235, shape: 3, rot: 0 }, // Right tower
+                    { x: 200, y: 195, shape: 4, rot: 0 }  // Flag
+                ],
+                pieces: [
+                    { type: 1, x: 60, y: 450, color: '#cdb4db', fold: 0, rot: 0 },
+                    { type: 1, x: 160, y: 450, color: '#bde0fe', fold: 0, rot: 0 },
+                    { type: 1, x: 260, y: 450, color: '#a2d2ff', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#ffc8dd', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "CRAB",
+                slots: [
+                    { x: 200, y: 250, shape: 3, rot: 0 }, // Body
+                    { x: 155, y: 240, shape: 4, rot: 1 }, // Left claw
+                    { x: 245, y: 240, shape: 4, rot: 2 }  // Right claw
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#ff6b6b', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#ffa07a', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ff8c94', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "ROBOT",
+                slots: [
+                    { x: 200, y: 180, shape: 3, rot: 0 }, // Head
+                    { x: 200, y: 250, shape: 2, rot: 1 }, // Body
+                    { x: 145, y: 245, shape: 3, rot: 0 }, // Left arm
+                    { x: 255, y: 245, shape: 3, rot: 0 }  // Right arm
+                ],
+                pieces: [
+                    { type: 1, x: 60, y: 450, color: '#adb5bd', fold: 0, rot: 0 },
+                    { type: 1, x: 160, y: 450, color: '#dee2e6', fold: 0, rot: 0 },
+                    { type: 1, x: 260, y: 450, color: '#ced4da', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#6c757d', fold: 0, rot: 0 }
+                ]
+            },
+            // --- L5 (offset 14, 6 puzzles): the gauntlet ---
+            {
+                name: "UMBRELLA",
+                slots: [
+                    { x: 200, y: 200, shape: 1, rot: 2 }, // Canopy
+                    { x: 200, y: 280, shape: 2, rot: 1 }, // Handle
+                    { x: 200, y: 320, shape: 4, rot: 3 }  // Hook
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#ff006e', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#fb5607', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ffbe0b', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "WHALE",
+                slots: [
+                    { x: 200, y: 250, shape: 1, rot: 0 }, // Body
+                    { x: 260, y: 220, shape: 4, rot: 1 }, // Tail upper
+                    { x: 260, y: 280, shape: 4, rot: 0 }, // Tail lower
+                    { x: 165, y: 195, shape: 3, rot: 0 }  // Spout cloud
+                ],
+                pieces: [
+                    { type: 0, x: 80, y: 450, color: '#1e3a8a', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#3b82f6', fold: 0, rot: 0 },
+                    { type: 1, x: 280, y: 450, color: '#60a5fa', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#dbeafe', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "FLOWER",
+                slots: [
+                    { x: 200, y: 245, shape: 3, rot: 0 }, // Center
+                    { x: 200, y: 195, shape: 4, rot: 1 }, // Top petal
+                    { x: 250, y: 245, shape: 4, rot: 2 }, // Right petal
+                    { x: 200, y: 295, shape: 4, rot: 3 }, // Bottom petal
+                    { x: 150, y: 245, shape: 4, rot: 0 }  // Left petal
+                ],
+                pieces: [
+                    { type: 1, x: 50, y: 450, color: '#fcd34d', fold: 0, rot: 0 },
+                    { type: 1, x: 130, y: 450, color: '#f472b6', fold: 0, rot: 0 },
+                    { type: 1, x: 210, y: 450, color: '#c084fc', fold: 0, rot: 0 },
+                    { type: 1, x: 290, y: 450, color: '#fb7185', fold: 0, rot: 0 },
+                    { type: 1, x: 360, y: 450, color: '#f9a8d4', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "HOURGLASS",
+                slots: [
+                    { x: 200, y: 195, shape: 1, rot: 2 }, // Top sand
+                    { x: 200, y: 305, shape: 1, rot: 0 }, // Bottom sand
+                    { x: 200, y: 250, shape: 4, rot: 0 }  // Pinch
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#fde68a', fold: 0, rot: 0 },
+                    { type: 0, x: 220, y: 450, color: '#facc15', fold: 0, rot: 0 },
+                    { type: 1, x: 340, y: 450, color: '#a16207', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "SWAN",
+                slots: [
+                    { x: 220, y: 285, shape: 0, rot: 0 }, // Body
+                    { x: 155, y: 215, shape: 4, rot: 0 }, // Neck
+                    { x: 155, y: 175, shape: 3, rot: 0 }  // Head
+                ],
+                pieces: [
+                    { type: 0, x: 100, y: 450, color: '#f8fafc', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#e2e8f0', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ffd166', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "FORTRESS",
+                slots: [
+                    { x: 200, y: 290, shape: 2, rot: 0 }, // Outer wall
+                    { x: 145, y: 235, shape: 3, rot: 0 }, // Left battlement
+                    { x: 255, y: 235, shape: 3, rot: 0 }, // Right battlement
+                    { x: 200, y: 235, shape: 1, rot: 0 }  // Inner keep
+                ],
+                pieces: [
+                    { type: 0, x: 80, y: 450, color: '#7f5539', fold: 0, rot: 0 },
+                    { type: 1, x: 180, y: 450, color: '#b08968', fold: 0, rot: 0 },
+                    { type: 1, x: 270, y: 450, color: '#ddb892', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#e6ccb2', fold: 0, rot: 0 }
+                ]
+            }
+        ];
+
+        // Per-level offset: each level pulls a fresh, non-overlapping slice of
+        // LEVELS so puzzles never repeat across the whole game.
+        // L1 → 0, L2 → 2, L3 → 5, L4 → 9, L5 → 14. Total used: 20.
+        function getPuzzleOffset(lvl) {
+            let offset = 0;
+            for (let i = 1; i < lvl; i++) offset += (i + 1);
+            return offset;
+        }
+        const puzzleOffset = getPuzzleOffset(currentLevelIndex);
+
+        // --- Core Game Logic ---
+
+        function initGame(resetAll) {
+            if (resetAll) {
+                puzzlesCompleted = 0;
+                totalScore = 0;
+                timeLeft = puzzlesRequired * 25000;
+                earnedStars = 0;
+                resultPosted = false;
+                // HUD inits to 0 stars per SCORING_GUIDE.md §3 (no flash).
+                document.getElementById('star-1').className = 'star';
+                document.getElementById('star-2').className = 'star';
+                document.getElementById('star-3').className = 'star';
+            }
+            // Note: puzzlesCompleted is incremented in checkSnaps on each puzzle win.
+
+            const lvl = LEVELS[(puzzleOffset + puzzlesCompleted) % LEVELS.length];
+            levelDisplayEl.innerText = puzzlesCompleted + "/" + puzzlesRequired;
+            if (scoreEl) scoreEl.innerText = canonicalScore();
+
+            slots = lvl.slots.map(s => ({ ...s, isFilled: false }));
+            
+            pieces = lvl.pieces.map(p => ({
+                type: p.type,
+                x: p.x, y: p.y,
+                color: p.color,
+                fold: p.fold,
+                rot: p.rot,
+                isLocked: false
+            }));
+
+            selectedPiece = null;
+            isDragging = false;
+
+            gameState = 'PLAY';
+            startScreen.classList.add('hidden');
+            nextLevelScreen.classList.add('hidden');
+            winScreen.classList.add('hidden');
+            controlsTray.classList.remove('hidden');
+            
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function getShapeCenter(shapeId, rot) {
+            const pts = SHAPES[shapeId].pts;
+            const rad = rot * Math.PI / 2;
+            const cos = Math.cos(rad);
+            const sin = Math.sin(rad);
+            
+            let cx = 0, cy = 0;
+            for (let i = 0; i < pts.length; i++) {
+                const px = pts[i][0];
+                const py = pts[i][1];
+                cx += px * cos - py * sin;
+                cy += px * sin + py * cos;
+            }
+            return { x: cx / pts.length, y: cy / pts.length };
+        }
+
+        function checkSnaps() {
+            // Clear all filled states
+            slots.forEach(s => s.isFilled = false);
+            
+            // Re-evaluate
+            pieces.forEach(p => {
+                if (p === selectedPiece && isDragging) return; // Don't snap while actively dragging
+                p.isLocked = false;
+
+                const currentShapeId = PAPER_TYPES[p.type].sequence[p.fold];
+
+                for (let s of slots) {
+                    if (s.isFilled) continue;
+
+                    // Match logic
+                    let rotMatch = false;
+                    if (currentShapeId === 0 || currentShapeId === 3) rotMatch = true; // Squares
+                    else if (currentShapeId === 2) rotMatch = (p.rot % 2 === s.rot % 2); // Rects
+                    else rotMatch = (p.rot % 4 === s.rot % 4); // Triangles (exact)
+
+                    if (currentShapeId === s.shape && rotMatch) {
+                        const pCenter = getShapeCenter(currentShapeId, p.rot);
+                        const sCenter = getShapeCenter(s.shape, s.rot);
+                        
+                        const visualPx = p.x + pCenter.x;
+                        const visualPy = p.y + pCenter.y;
+                        const visualSx = s.x + sCenter.x;
+                        const visualSy = s.y + sCenter.y;
+                        
+                        const dist = Math.hypot(visualPx - visualSx, visualPy - visualSy);
+                        if (dist < 40) { // Generous snap radius
+                            p.x = s.x;
+                            p.y = s.y;
+                            p.isLocked = true;
+                            s.isFilled = true;
+                            p.rot = s.rot;
+                            bunnyState = 'happy';
+                            bunnyStateTimer = performance.now();
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // Win Condition
+            if (slots.every(s => s.isFilled)) {
+                puzzlesCompleted++;
+                totalScore = canonicalScore();
+                if (scoreEl) scoreEl.innerText = totalScore;
+
+                if (puzzlesCompleted >= puzzlesRequired) {
+                    gameState = 'GAMEOVER';
+                    controlsTray.classList.add('hidden');
+
+                    // Per MINIGAMES_GUIDE.md §6 Swaddle-gami: strict > thresholds.
+                    let finalStars = 1;
+                    if (timeLeft > 15000) finalStars = 2;
+                    if (timeLeft > 30000) finalStars = 3;
+
+                    document.getElementById('final-score').innerText = totalScore;
+                    document.getElementById('win-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
+                    winScreen.classList.remove('bg-pink-900/90');
+                    winScreen.classList.add('bg-purple-900/90');
+                    
+                    const finalStarsContainer = document.getElementById('final-stars-display');
+                    if (finalStarsContainer) {
+                        const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
+                        finalStarSpans.forEach((star, index) => {
+                            if (index < finalStars) {
+                                star.classList.add('earned');
+                                star.classList.remove('empty');
+                            } else {
+                                star.classList.remove('earned');
+                                star.classList.add('empty');
+                            }
+                        });
+                    }
+                    
+                    const nextLevelBtn = document.getElementById('next-level-btn');
+                    if (nextLevelBtn) {
+                        if (currentLevelIndex < 5) {
+                            nextLevelBtn.classList.remove('hidden');
+                        } else {
+                            nextLevelBtn.classList.add('hidden');
+                        }
+                    }
+
+                    // Win → "Play Again" (replay for a higher star count).
+                    const restartBtn = document.getElementById('restart-btn');
+                    if (restartBtn) restartBtn.innerText = 'Play Again';
+
+                    winScreen.classList.remove('hidden');
+                    postResult(finalStars, 'win');
+                } else {
+                    // Instantly load next puzzle
+                    initGame(false);
+                }
+            }
+        }
+
+        // --- Drawing ---
+
+        function drawShapePath(ctx, shapeId, rot, x, y) {
+            const pts = SHAPES[shapeId].pts;
+            const rad = rot * Math.PI / 2;
+            const cos = Math.cos(rad);
+            const sin = Math.sin(rad);
+
+            ctx.beginPath();
+            for (let i = 0; i < pts.length; i++) {
+                const px = pts[i][0];
+                const py = pts[i][1];
+                // Rotate
+                const rx = px * cos - py * sin;
+                const ry = px * sin + py * cos;
+                
+                if (i === 0) ctx.moveTo(x + rx, y + ry);
+                else ctx.lineTo(x + rx, y + ry);
+            }
+            ctx.closePath();
+        }
+
+        function drawBunnyMascot() {
+            // Draw bunny head in top left background
+            ctx.save();
+            ctx.translate(60, 80);
+            
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.arc(0, 0, 25, 0, Math.PI*2); ctx.fill(); // Head
+            ctx.beginPath(); ctx.ellipse(-10, -30, 8, 20, -0.2, 0, Math.PI*2); ctx.fill(); // Ear L
+            ctx.beginPath(); ctx.ellipse(10, -30, 8, 20, 0.2, 0, Math.PI*2); ctx.fill(); // Ear R
+            
+            let timeNow = performance.now();
+            
+            if (isDragging && selectedPiece) {
+                bunnyState = 'thinking';
+                bunnyStateTimer = timeNow;
+            } else if (timeNow - bunnyStateTimer > 1500 && bunnyState !== 'awake') {
+                bunnyState = 'awake';
+            }
+
+            if (bunnyState === 'thinking') {
+                // Thinking eyes (looking up and to the side)
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(-8, 0, 6, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(8, 0, 6, 0, Math.PI*2); ctx.fill();
+                
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(-6, -2, 2.5, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(10, -2, 2.5, 0, Math.PI*2); ctx.fill();
+
+                // Thinking mouth (puckered/straight line to the side)
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-2, 12); ctx.lineTo(4, 11); ctx.stroke();
+
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 9, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
+
+                // Question mark bubble
+                ctx.fillStyle = '#ffdf00';
+                ctx.font = '12px "Press Start 2P"';
+                // Slight floating animation
+                let floatY = Math.sin(timeNow / 200) * 2;
+                ctx.fillText('?', 15, -10 + floatY);
+            } else if (bunnyState === 'happy') {
+                // Happy eyes
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-12, 0); ctx.quadraticCurveTo(-8, -5, -4, 0); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(4, 0); ctx.quadraticCurveTo(8, -5, 12, 0); ctx.stroke();
+                
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 9, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
+
+                // Smile
+                ctx.beginPath(); ctx.moveTo(-6, 12); ctx.quadraticCurveTo(0, 18, 6, 12); ctx.stroke();
+                
+                // Exclamation
+                ctx.fillStyle = '#ffdf00';
+                ctx.font = '14px "Press Start 2P"';
+                ctx.fillText('!', 20, -10);
+            } else {
+                // Awake eyes (circles)
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(-8, 0, 3, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(8, 0, 3, 0, Math.PI*2); ctx.fill();
+                
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 11, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 8, 3, 0, Math.PI*2); ctx.fill();
+            }
+            
+            ctx.restore();
+        }
+
+        function draw() {
+            // Background
+            ctx.fillStyle = '#1a1525';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            if (gameState === 'START') return;
+
+            drawBunnyMascot();
+
+            // Draw Tray Area
+            ctx.fillStyle = '#221d2d';
+            ctx.fillRect(0, 350, GAME_WIDTH, GAME_HEIGHT - 350);
+            ctx.fillStyle = '#2d273a';
+            ctx.fillRect(0, 350, GAME_WIDTH, 4);
+
+            // Draw Target Slots (Dashed Outlines)
+            slots.forEach(s => {
+                drawShapePath(ctx, s.shape, s.rot, s.x, s.y);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+                ctx.setLineDash([]); // Reset
+            });
+
+            // Draw Pieces
+            pieces.forEach(p => {
+                const currentShapeId = PAPER_TYPES[p.type].sequence[p.fold];
+                
+                // Shadow / Selection Glow
+                ctx.save();
+                if (p === selectedPiece) {
+                    ctx.shadowColor = '#ffffff';
+                    ctx.shadowBlur = 15;
+                    ctx.transform(1.05, 0, 0, 1.05, -p.x*0.05, -p.y*0.05); // Slight pop effect
+                } else if (!p.isLocked) {
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowOffsetY = 5;
+                }
+
+                drawShapePath(ctx, currentShapeId, p.rot, p.x, p.y);
+                
+                // Base Color
+                ctx.fillStyle = p.color;
+                ctx.fill();
+
+                // Folded Fabric details (Inner dashed lines to look stitched)
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.stroke();
+                
+                // Solid border
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+                ctx.setLineDash([]);
+                ctx.lineWidth = 4;
+                ctx.stroke();
+
+                // "Folded" visual line if it's folded (Index > 0)
+                if (p.fold > 0) {
+                    ctx.clip(); // Clip to the shape
+                    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+                    ctx.lineWidth = 4;
+                    // Draw a couple diagonal lines to simulate creases
+                    ctx.beginPath();
+                    ctx.moveTo(p.x - 100, p.y - 100);
+                    ctx.lineTo(p.x + 100, p.y + 100);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            });
+        }
+
+        function gameLoop(timestamp) {
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+            if (dt > 100) dt = 16; 
+
+            if (gameState === 'PLAY') {
+                timeLeft -= dt;
+
+                let displayTime = Math.max(0, timeLeft / 1000).toFixed(1);
+                if (timerEl) timerEl.innerText = displayTime;
+
+                // Live preview stars only meaningful once at least one puzzle solved.
+                let currentStars = puzzlesCompleted > 0 ? 1 : 0;
+                if (puzzlesCompleted > 0 && timeLeft > 15000) currentStars = 2;
+                if (puzzlesCompleted > 0 && timeLeft > 30000) currentStars = 3;
+                if (currentStars !== earnedStars) {
+                    earnedStars = currentStars;
+                    document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
+                    document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
+                    document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
+                }
+
+                // Keep HUD score reflecting canonical formula live.
+                if (scoreEl) scoreEl.innerText = canonicalScore();
+
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    gameState = 'GAMEOVER';
+                    controlsTray.classList.add('hidden');
+
+                    const finalScore = canonicalScore();
+                    document.getElementById('win-screen').querySelector('h1').innerText = "TIME'S UP!";
+                    winScreen.classList.remove('bg-purple-900/90');
+                    winScreen.classList.add('bg-pink-900/90');
+                    document.getElementById('final-score').innerText = finalScore;
+
+                    const finalStarsContainer = document.getElementById('final-stars-display');
+                    if (finalStarsContainer) {
+                        const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
+                        finalStarSpans.forEach((star) => {
+                            star.classList.remove('earned');
+                            star.classList.add('empty');
+                        });
+                    }
+
+                    const nextLevelBtn = document.getElementById('next-level-btn');
+                    if (nextLevelBtn) nextLevelBtn.classList.add('hidden');
+
+                    // Fail → "Try Again".
+                    const restartBtn = document.getElementById('restart-btn');
+                    if (restartBtn) restartBtn.innerText = 'Try Again';
+
+                    winScreen.classList.remove('hidden');
+                    postResult(0, 'fail');
+                }
+            }
+
+            draw();
+
+            if (gameState !== 'START') {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Boot
+        ctx.fillStyle = '#1a1525';
+        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+        if (urlParams.get('autoStart') === 'true') {
+            initGame(true);
+        }
+        
+    </script>
+</body>
+</html>

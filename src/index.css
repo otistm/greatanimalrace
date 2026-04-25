@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-arcade: "Press Start 2P", monospace;
+}
+
+@layer base {
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: none;
+  }
+  body {
+    @apply font-sans antialiased text-gray-900;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  @keyframes zoomIn {
+    0% { transform: scale(1); }
+    100% { transform: scale(30); }
+  }
+  .animate-zoomIn {
+    animation: zoomIn 4.5s cubic-bezier(0.6, 0.05, 0.8, 0.4) forwards;
+  }
+
+  .scanlines {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(
+        to bottom,
+        rgba(255,255,255,0),
+        rgba(255,255,255,0) 50%,
+        rgba(0,0,0,0.25) 50%,
+        rgba(0,0,0,0.25)
+    );
+    background-size: 100% 4px;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .crt-flicker {
+    animation: flicker 0.15s infinite;
+  }
+
+  @keyframes flicker {
+    0% { opacity: 0.95; }
+    50% { opacity: 1; }
+    100% { opacity: 0.95; }
+  }
+
+  .text-glow {
+    text-shadow: 2px 2px 0px #888, -1px -1px 0px #fff;
+  }
+
+  .arcade-btn {
+    background: #34495e;
+    border: 3px solid #2c3e50;
+    box-shadow: 0 4px 0 #1a252f;
+    transition: transform 0.1s, box-shadow 0.1s;
+  }
+  .arcade-btn:active, .arcade-btn.active {
+    transform: translateY(4px);
+    box-shadow: 0 0px 0 #1a252f;
+  }
+}

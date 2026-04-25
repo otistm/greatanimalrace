@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bottle-Rama</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            touch-action: none;
+            font-family: 'Press Start 2P', monospace;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 600px;
+            margin: 0 auto;
+            background: #2c3e50;
+            box-shadow: 0 0 30px rgba(50, 200, 150, 0.15);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #canvas-wrapper {
+            position: relative;
+            width: 100%;
+            height: 55%; /* Top half is the game view */
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+        }
+
+        .scanlines {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.25) 50%,
+                rgba(0,0,0,0.25)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .crt-flicker {
+            animation: flicker 0.15s infinite;
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.95; }
+            50% { opacity: 1; }
+            100% { opacity: 0.95; }
+        }
+
+        .text-glow {
+            text-shadow: 2px 2px 0px #e67e22, -1px -1px 0px #f1c40f;
+        }
+
+        /* Control Panel */
+        #control-panel {
+            flex: 1;
+            background: #1a1a1a;
+            border-top: 4px solid #333;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 20;
+        }
+
+        .main-actions {
+            display: flex;
+            gap: 10px;
+            height: 50px;
+        }
+
+        .grid-actions {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            flex: 1;
+        }
+
+        .btn {
+            background: #34495e;
+            border: 3px solid #2c3e50;
+            color: #ecf0f1;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            border-radius: 6px;
+            box-shadow: 0 4px 0 #1a252f;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.1s, background 0.1s;
+        }
+        
+        @media (min-width: 400px) {
+            .btn { font-size: 12px; }
+        }
+
+        .btn:active, .btn.active {
+            transform: translateY(4px);
+            box-shadow: 0 0px 0 #1a252f;
+            background: #4fc3f7;
+            color: #111;
+            border-color: #0288d1;
+        }
+
+        .btn-serve { background: #27ae60; border-color: #2ecc71; box-shadow: 0 4px 0 #1e8449; flex: 2;}
+        .btn-serve:active { background: #2ecc71; box-shadow: 0 0px 0 #1e8449; }
+        
+        .btn-trash { background: #c0392b; border-color: #e74c3c; box-shadow: 0 4px 0 #922b21; flex: 1;}
+        .btn-trash:active { background: #e74c3c; box-shadow: 0 0px 0 #922b21; }
+
+        .star { color: #555; font-size: 30px; text-shadow: 2px 2px 0 #000; }
+        .star.earned { color: #f1c40f; text-shadow: 2px 2px 0 #d35400; animation: pop 0.3s ease-out; }
+
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.5); }
+            100% { transform: scale(1); }
+        }
+
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+    <div id="game-container" class="crt-flicker">
+        
+        <!-- Start Screen (Outside canvas-wrapper to cover whole game) -->
+        <div id="start-screen" class="absolute inset-0 bg-black/90 flex flex-col items-center justify-center z-[100] p-4 text-center">
+            <h1 class="text-3xl sm:text-4xl text-white mb-4 text-glow leading-loose">BOTTLE<br>RAMA</h1>
+            <p class="text-gray-300 text-[9px] sm:text-[10px] mb-8 leading-loose uppercase">
+                Read the recipe ticket.<br>
+                Wash & Dry containers first!<br>
+                Add ingredients, temp, and mix.<br>
+                Cap it and serve before time runs out!
+            </p>
+            <div class="flex flex-col sm:flex-row gap-4 w-full max-w-xs">
+                <button id="start-btn" class="flex-1 bg-yellow-500 hover:bg-yellow-400 text-black border-4 border-white px-4 py-3 rounded text-xs uppercase animate-pulse cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Insert Coin
+                </button>
+                <button id="start-exit-btn" class="flex-1 bg-red-600 hover:bg-red-500 text-white border-4 border-white px-4 py-3 rounded text-xs uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Close
+                </button>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="absolute inset-0 bg-red-900/95 flex flex-col items-center justify-center z-[100] hidden p-4 text-center">
+            <button id="over-exit-btn" class="absolute top-4 right-4 bg-red-600 hover:bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center border-2 border-white shadow-md pointer-events-auto transition-transform hover:scale-105 active:scale-95 text-xs">
+                X
+            </button>
+            <h1 class="text-4xl text-white mb-2 text-glow">TIME'S UP!</h1>
+            <div id="final-stars-display" class="flex gap-2 mb-6">
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+                <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
+                <span class="star empty text-5xl drop-shadow-lg">★</span>
+            </div>
+            <p class="text-white text-lg mb-8 font-bold">SCORE: <span id="final-score" class="text-yellow-300">0</span></p>
+            <div class="flex flex-col sm:flex-row gap-4 w-full max-w-xs justify-center">
+                <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
+                    Play Again
+                </button>
+                <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Next Level
+                </button>
+            </div>
+        </div>
+
+        <div id="canvas-wrapper">
+            <canvas id="gameCanvas"></canvas>
+            <div class="scanlines"></div>
+
+            <!-- HUD -->
+            <div id="hud" class="absolute top-0 left-0 w-full p-3 flex justify-between items-start z-10 text-white text-[10px] sm:text-xs tracking-wider pointer-events-none">
+                <div class="flex flex-col gap-1">
+                    <div class="text-yellow-400">ORDERS: <span id="score-display">0/2</span></div>
+                    <div id="hud-stars" class="flex gap-1 mt-1">
+                        <span id="star-1" class="star">★</span>
+                        <span id="star-2" class="star">★</span>
+                        <span id="star-3" class="star">★</span>
+                    </div>
+                </div>
+                <div class="text-right flex flex-col gap-1">
+                    <button id="hud-exit-btn" class="bg-red-600 hover:bg-red-500 text-white w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center border-2 border-white shadow-md pointer-events-auto ml-auto transition-transform hover:scale-105 active:scale-95 text-[10px] sm:text-xs">
+                        X
+                    </button>
+                    <div id="timer-display" class="text-green-400 text-lg">60.0s</div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Control Panel -->
+        <div id="control-panel">
+            <div class="main-actions">
+                <button class="btn btn-trash" onclick="handleAction('trash')">TRASH</button>
+                <button class="btn btn-serve" onclick="handleAction('serve')">SERVE TO BABY</button>
+            </div>
+            <div class="grid-actions">
+                <button class="btn" onclick="handleAction('bottle')">BOTTLE</button>
+                <button class="btn" onclick="handleAction('cup')">CUP</button>
+                <button class="btn" onclick="handleAction('wash')" style="background: #2980b9;">WASH</button>
+                <button class="btn" onclick="handleAction('dry')" style="background: #d35400;">DRY</button>
+                
+                <button class="btn" onclick="handleAction('water')" style="color: #87CEEB;">+WATER</button>
+                <button class="btn" onclick="handleAction('formula')" style="color: #f1c40f;">+FORMULA</button>
+                <button class="btn" onclick="handleAction('heat')" style="color: #e74c3c;">HEAT</button>
+                <button class="btn" onclick="handleAction('chill')" style="color: #3498db;">CHILL</button>
+                
+                <button class="btn" onclick="handleAction('shake')">SHAKE</button>
+                <button class="btn" onclick="handleAction('stir')">STIR</button>
+                <button class="btn" onclick="handleAction('nipple')">NIPPLE</button>
+                <button class="btn" onclick="handleAction('straw')">STRAW</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Post message helper
+        function exitGame(score = 0) {
+            window.parent.postMessage({
+                type: 'EXIT_GAME',
+                score: score
+            }, '*');
+        }
+
+        function gameOver(score, stars = 0) {
+            window.parent.postMessage({
+                type: 'GAME_OVER',
+                score: score,
+                stars: stars
+            }, '*');
+        }
+
+        // Add exit handlers
+        document.getElementById('hud-exit-btn').addEventListener('click', () => exitGame(score));
+        document.getElementById('start-exit-btn').addEventListener('click', () => exitGame(0));
+        document.getElementById('over-exit-btn').addEventListener('click', () => exitGame(score));
+
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const GAME_WIDTH = 400;
+        const GAME_HEIGHT = 400; // Aspect ratio specifically for top half
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // UI
+        const scoreEl = document.getElementById('score-display');
+        const timerEl = document.getElementById('timer-display');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        
+        // Game State
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentLevel = parseInt(urlParams.get('level')) || 1;
+        
+        const LEVEL_CONFIGS = [
+            { targetOrders: 2, timeLimit: 60000 },
+            { targetOrders: 3, timeLimit: 60000 },
+            { targetOrders: 4, timeLimit: 60000 },
+            { targetOrders: 5, timeLimit: 50000 },
+            { targetOrders: 6, timeLimit: 50000 }
+        ];
+        
+        let gameState = 'START';
+        let score = 0;
+        let targetOrders = LEVEL_CONFIGS[0].targetOrders;
+        let timeLimit = LEVEL_CONFIGS[0].timeLimit;
+        let timeLeft = timeLimit;
+        let lastTime = 0;
+        let earnedStars = 3;
+        
+        let currentItem = null; // What the bunny is holding
+        let currentOrder = null; // What we need to make
+        
+        let particles = [];
+        let floatTexts = [];
+        
+        let bunnyState = 'awake';
+        let bunnyStateTimer = 0;
+        
+        // --- Entities & Logic ---
+        
+        const RECIPES = [
+            { name: "WARM FORMULA", type: 'bottle', water: 2, formula: 2, temp: 'warm', mixed: 'shaken', lid: 'nipple' },
+            { name: "COLD WATER", type: 'cup', water: 3, formula: 0, temp: 'cold', mixed: 'none', lid: 'straw' },
+            { name: "HOT MILK", type: 'cup', water: 2, formula: 1, temp: 'hot', mixed: 'stirred', lid: 'straw' },
+            { name: "ROOM FORMULA", type: 'bottle', water: 3, formula: 3, temp: 'room', mixed: 'shaken', lid: 'nipple' },
+            { name: "HOT WATER", type: 'bottle', water: 2, formula: 0, temp: 'hot', mixed: 'none', lid: 'nipple' },
+            { name: "COLD MILK", type: 'cup', water: 1, formula: 2, temp: 'cold', mixed: 'stirred', lid: 'straw' }
+        ];
+
+        function spawnOrder() {
+            const recipe = RECIPES[Math.floor(Math.random() * RECIPES.length)];
+            currentOrder = { ...recipe };
+        }
+
+        function createParticles(x, y, color, count=5) {
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4 - 2,
+                    life: 1.0, color: color
+                });
+            }
+        }
+
+        function spawnFloatText(x, y, text, color) {
+            floatTexts.push({ x, y, text, color, life: 1.0 });
+        }
+
+        function getExpectedStep() {
+            if (currentItem.isDirty) return 'wash';
+            if (currentItem.isWet) return 'dry';
+            if (currentItem.water < currentOrder.water) return 'water';
+            if (currentItem.formula < currentOrder.formula) return 'formula';
+            if (currentItem.temp !== currentOrder.temp) return 'temp';
+            if (currentItem.mixed !== currentOrder.mixed) return 'mix';
+            if (currentItem.lid !== currentOrder.lid) return 'lid';
+            return 'serve';
+        }
+
+        window.handleAction = function(act) {
+            if (gameState !== 'PLAY') return;
+
+            const cx = GAME_WIDTH / 2;
+            const cy = GAME_HEIGHT / 2 + 50;
+
+            if (act === 'trash') {
+                if (currentItem) {
+                    currentItem = null;
+                    createParticles(cx, cy, '#7f8c8d', 10);
+                }
+                return;
+            }
+
+            // Spawn new item
+            if (!currentItem) {
+                if (act === 'bottle' || act === 'cup') {
+                    currentItem = { type: act, isDirty: true, isWet: false, water: 0, formula: 0, temp: 'room', mixed: 'none', lid: null, ruined: false };
+                    
+                    if (act !== currentOrder.type) {
+                        currentItem.ruined = true;
+                        spawnFloatText(cx, cy, "WRONG CONTAINER!", "#e74c3c");
+                        document.getElementById('canvas-wrapper').style.transform = 'translate(-10px, 0)';
+                        setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(10px, 0)'; }, 50);
+                        setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(0, 0)'; }, 100);
+                    } else {
+                        createParticles(cx, cy, '#fff');
+                    }
+                } else {
+                    spawnFloatText(cx, cy, "GRAB CONTAINER FIRST!", "#e74c3c");
+                }
+                return;
+            }
+
+            if (currentItem.ruined) {
+                spawnFloatText(cx, cy, "RUINED! TRASH IT", "#e74c3c");
+                document.getElementById('canvas-wrapper').style.transform = 'translate(-5px, 0)';
+                setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(5px, 0)'; }, 50);
+                setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(0, 0)'; }, 100);
+                return;
+            }
+
+            const expectedStep = getExpectedStep();
+            let isCorrectAction = false;
+            let feedbackText = "";
+
+            switch(act) {
+                case 'wash':
+                    if (expectedStep === 'wash') {
+                        currentItem.isDirty = false;
+                        currentItem.isWet = true;
+                        createParticles(cx, cy, '#3498db', 10);
+                        spawnFloatText(cx, cy, "WASHED!", "#3498db");
+                        isCorrectAction = true;
+                    }
+                    break;
+
+                case 'dry':
+                    if (expectedStep === 'dry') {
+                        currentItem.isWet = false;
+                        createParticles(cx, cy, '#ecf0f1', 5);
+                        spawnFloatText(cx, cy, "DRIED!", "#f1c40f");
+                        isCorrectAction = true;
+                    }
+                    break;
+
+                case 'water':
+                    if (expectedStep === 'water') {
+                        currentItem.water++;
+                        currentItem.temp = 'room'; // Adding tap water resets temp
+                        createParticles(cx, cy, '#87CEEB');
+                        isCorrectAction = true;
+                    } else {
+                        if (currentItem.water >= currentOrder.water) feedbackText = "TOO MUCH WATER!";
+                    }
+                    break;
+
+                case 'formula':
+                    if (expectedStep === 'formula') {
+                        currentItem.formula++;
+                        currentItem.mixed = 'none'; // Unmixes if you add more
+                        createParticles(cx, cy, '#f1c40f');
+                        isCorrectAction = true;
+                    } else {
+                        if (currentItem.formula >= currentOrder.formula) feedbackText = "TOO MUCH POWDER!";
+                    }
+                    break;
+
+                case 'heat':
+                case 'chill':
+                    if (expectedStep === 'temp') {
+                        if (act === 'heat') {
+                            if (currentItem.temp === 'cold') currentItem.temp = 'room';
+                            else if (currentItem.temp === 'room') { currentItem.temp = 'warm'; spawnFloatText(cx, cy, "WARM", "#e67e22"); }
+                            else if (currentItem.temp === 'warm') { currentItem.temp = 'hot'; spawnFloatText(cx, cy, "HOT!", "#e74c3c"); createParticles(cx, cy, '#e74c3c'); }
+                            else { feedbackText = "TOO HOT!"; }
+                        } else {
+                            if (currentItem.temp === 'hot') currentItem.temp = 'warm';
+                            else if (currentItem.temp === 'warm') currentItem.temp = 'room';
+                            else if (currentItem.temp === 'room') { currentItem.temp = 'cold'; spawnFloatText(cx, cy, "COLD", "#3498db"); createParticles(cx, cy, '#3498db');}
+                            else { feedbackText = "TOO COLD!"; }
+                        }
+                        if (!feedbackText) isCorrectAction = true;
+                    }
+                    break;
+
+                case 'shake':
+                case 'stir':
+                    if (expectedStep === 'mix') {
+                        if (act === 'shake' && currentOrder.mixed === 'shaken') {
+                            currentItem.mixed = 'shaken';
+                            spawnFloatText(cx, cy, "SHAKEN!", "#fff");
+                            document.getElementById('canvas-wrapper').style.transform = 'translate(5px, 5px)';
+                            setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(0, 0)'; }, 50);
+                            isCorrectAction = true;
+                        } else if (act === 'stir' && currentOrder.mixed === 'stirred') {
+                            currentItem.mixed = 'stirred';
+                            spawnFloatText(cx, cy, "STIRRED!", "#fff");
+                            isCorrectAction = true;
+                        } else {
+                            feedbackText = "WRONG MIX!";
+                        }
+                    }
+                    break;
+
+                case 'nipple':
+                case 'straw':
+                    if (expectedStep === 'lid') {
+                        if (act === currentOrder.lid) {
+                            currentItem.lid = act;
+                            isCorrectAction = true;
+                        } else {
+                            feedbackText = "WRONG LID!";
+                        }
+                    }
+                    break;
+
+                case 'serve':
+                    if (expectedStep === 'serve') {
+                        serveItem();
+                        return;
+                    } else {
+                        feedbackText = "NOT READY TO SERVE!";
+                    }
+                    break;
+                    
+                case 'bottle':
+                case 'cup':
+                    feedbackText = "ALREADY HAVE CONTAINER!";
+                    break;
+            }
+
+            if (!isCorrectAction) {
+                currentItem.ruined = true;
+                if (!feedbackText) feedbackText = "OUT OF ORDER!";
+                spawnFloatText(cx, cy, feedbackText, "#e74c3c");
+                
+                document.getElementById('canvas-wrapper').style.transform = 'translate(-10px, 0)';
+                setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(10px, 0)'; }, 50);
+                setTimeout(() => { document.getElementById('canvas-wrapper').style.transform = 'translate(0, 0)'; }, 100);
+                
+                bunnyState = 'nervous';
+                bunnyStateTimer = performance.now();
+            }
+        };
+
+        function serveItem() {
+            const cx = GAME_WIDTH / 2;
+            const cy = GAME_HEIGHT / 2 + 50;
+
+            // Success!
+            score++;
+            scoreEl.innerText = score + "/" + targetOrders;
+            currentItem = null;
+            
+            if (score >= targetOrders) {
+                // Level Complete!
+                gameState = 'GAMEOVER';
+                
+                let finalStars = 1;
+                if (timeLeft >= 10000) finalStars = 2;
+                if (timeLeft >= 20000) finalStars = 3;
+                
+                document.getElementById('game-over-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
+                document.getElementById('final-score').innerText = "CLEARED!";
+                
+                const finalStarsContainer = document.getElementById('final-stars-display');
+                if (finalStarsContainer) {
+                    const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
+                    finalStarSpans.forEach((star, index) => {
+                        if (index < finalStars) {
+                            star.classList.add('earned');
+                            star.classList.remove('empty');
+                        } else {
+                            star.classList.remove('earned');
+                            star.classList.add('empty');
+                        }
+                    });
+                }
+                
+                const nextBtn = document.getElementById('next-level-btn');
+                if (nextBtn) {
+                    if (currentLevel < 5) {
+                        nextBtn.classList.remove('hidden');
+                    } else {
+                        nextBtn.classList.add('hidden');
+                    }
+                }
+                
+                gameOver(score * 10, finalStars);
+                gameOverScreen.classList.remove('hidden');
+            } else {
+                spawnFloatText(GAME_WIDTH - 80, GAME_HEIGHT - 100, "YUM!", "#2ecc71");
+                createParticles(GAME_WIDTH - 80, GAME_HEIGHT - 100, '#f1c40f', 20);
+                spawnOrder();
+                
+                bunnyState = 'happy';
+                bunnyStateTimer = performance.now();
+            }
+        }
+
+        function startGame() {
+            const config = LEVEL_CONFIGS[Math.min(currentLevel - 1, 4)];
+            targetOrders = config.targetOrders;
+            timeLimit = config.timeLimit;
+            
+            score = 0;
+            timeLeft = timeLimit;
+            earnedStars = 3;
+            document.getElementById('star-1').className = 'star earned';
+            document.getElementById('star-2').className = 'star earned';
+            document.getElementById('star-3').className = 'star earned';
+            currentItem = null;
+            particles = [];
+            floatTexts = [];
+            
+            scoreEl.innerText = score + "/" + targetOrders;
+            spawnOrder();
+            
+            gameState = 'PLAY';
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        document.getElementById('start-btn').addEventListener('click', startGame);
+        document.getElementById('restart-btn').addEventListener('click', startGame);
+        const nextBtn = document.getElementById('next-level-btn');
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                window.parent.postMessage({ type: 'NEXT_LEVEL', score: score * 10, stars: earnedStars, level: currentLevel }, '*');
+            });
+        }
+
+        function update(dt) {
+            if (gameState !== 'PLAY') return;
+
+            timeLeft -= dt;
+            
+            let displayTime = Math.max(0, timeLeft / 1000).toFixed(1);
+            timerEl.innerText = displayTime + "s";
+            
+            if (timeLeft <= 10000) timerEl.className = 'text-red-500 text-lg animate-pulse';
+            else timerEl.className = 'text-green-400 text-lg';
+
+            let currentStars = 1;
+            if (timeLeft >= 10000) currentStars = 2;
+            if (timeLeft >= 20000) currentStars = 3;
+            
+            if (currentStars !== earnedStars) {
+                earnedStars = currentStars;
+                document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
+                document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
+                document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
+            }
+
+            if (timeLeft <= 0) {
+                gameState = 'GAMEOVER';
+                document.getElementById('game-over-screen').querySelector('h1').innerText = "TIME'S UP!";
+                document.getElementById('final-score').innerText = "FAILED";
+                
+                const finalStarsContainer = document.getElementById('final-stars-display');
+                if (finalStarsContainer) {
+                    const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
+                    finalStarSpans.forEach((star) => {
+                        star.classList.remove('earned');
+                        star.classList.add('empty');
+                    });
+                }
+                
+                const nextBtn = document.getElementById('next-level-btn');
+                if (nextBtn) {
+                    nextBtn.classList.add('hidden');
+                }
+                
+                gameOver(score * 10, 0);
+
+                gameOverScreen.classList.remove('hidden');
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            for (let i = floatTexts.length - 1; i >= 0; i--) {
+                let ft = floatTexts[i];
+                ft.y -= 1;
+                ft.life -= 0.015;
+                if (ft.life <= 0) floatTexts.splice(i, 1);
+            }
+        }
+
+        // --- Drawing ---
+
+        function drawBunny(x, y) {
+            ctx.save();
+            ctx.translate(x + 25, y + 30); // Center translation for head
+            
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.arc(0, 0, 25, 0, Math.PI*2); ctx.fill(); // Head
+            ctx.beginPath(); ctx.ellipse(-10, -30, 8, 20, -0.2, 0, Math.PI*2); ctx.fill(); // Ear L
+            ctx.beginPath(); ctx.ellipse(10, -30, 8, 20, 0.2, 0, Math.PI*2); ctx.fill(); // Ear R
+            
+            let timeNow = performance.now();
+            
+            if (timeNow - bunnyStateTimer > 1500 && bunnyState !== 'awake') {
+                bunnyState = 'awake';
+            }
+
+            if (bunnyState === 'nervous') {
+                // Nervous eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(-8, 0, 6, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(8, 0, 6, 0, Math.PI*2); ctx.fill();
+                
+                ctx.fillStyle = '#c0392b';
+                let shakeX = (Math.random() - 0.5) * 2;
+                let shakeY = (Math.random() - 0.5) * 2;
+                ctx.beginPath(); ctx.arc(-8 + shakeX, shakeY, 2, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(8 + shakeX, shakeY, 2, 0, Math.PI*2); ctx.fill();
+
+                // Nervous mouth
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-4, 12); ctx.lineTo(0, 10); ctx.lineTo(4, 12); ctx.stroke();
+
+                // Nose
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
+                
+                // Sweat drop
+                ctx.fillStyle = '#8fd3f4';
+                ctx.beginPath(); 
+                ctx.arc(15, -6, 3, 0, Math.PI, false); 
+                ctx.lineTo(15, -11); 
+                ctx.closePath();
+                ctx.fill();
+            } else if (bunnyState === 'happy') {
+                // Happy eyes
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-12, 0); ctx.quadraticCurveTo(-8, -5, -4, 0); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(4, 0); ctx.quadraticCurveTo(8, -5, 12, 0); ctx.stroke();
+                
+                // Nose
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
+
+                // Smile
+                ctx.beginPath(); ctx.moveTo(-6, 12); ctx.quadraticCurveTo(0, 18, 6, 12); ctx.stroke();
+                
+                // Exclamation
+                ctx.fillStyle = '#ffdf00';
+                ctx.font = '14px "Press Start 2P"';
+                ctx.fillText('!', 20, -10);
+            } else {
+                // Awake eyes (circles)
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(-8, 0, 3, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(8, 0, 3, 0, Math.PI*2); ctx.fill();
+                
+                // Nose
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(0, 8, 3, 0, Math.PI*2); ctx.fill();
+            }
+            
+            ctx.restore();
+        }
+
+        function drawItem(item, x, y) {
+            if (!item) return;
+
+            const isBottle = item.type === 'bottle';
+            const w = isBottle ? 30 : 40;
+            const h = isBottle ? 60 : 35;
+            const bx = x - w/2;
+            const by = y - h;
+
+            // Liquid Level & Color
+            let fillHeight = (item.water / 3) * (h - 5);
+            let liqColor = '#87CEEB'; // water
+            if (item.formula > 0) {
+                // Blend to yellow/white based on mix
+                if (item.mixed !== 'none') liqColor = '#fdf5e6'; // Milk
+                else liqColor = '#e6ccaa'; // Unmixed yellowy
+            }
+
+            // Glass Back
+            ctx.fillStyle = 'rgba(236, 240, 241, 0.4)';
+            ctx.fillRect(bx, by, w, h);
+            
+            // Liquid
+            if (fillHeight > 0) {
+                ctx.fillStyle = liqColor;
+                ctx.fillRect(bx, by + h - fillHeight, w, fillHeight);
+                
+                // Unmixed powder clumps
+                if (item.formula > 0 && item.mixed === 'none') {
+                    ctx.fillStyle = '#fff';
+                    for(let i=0; i<item.formula*2; i++) {
+                        ctx.fillRect(bx + 5 + (i*7)%w, by + h - fillHeight + (i*5)%fillHeight, 4, 4);
+                    }
+                }
+            }
+
+            // Glass Front/Outline
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(bx, by, w, h);
+            // Measurement lines
+            ctx.beginPath(); ctx.moveTo(bx, by+h*0.33); ctx.lineTo(bx+5, by+h*0.33); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(bx, by+h*0.66); ctx.lineTo(bx+5, by+h*0.66); ctx.stroke();
+
+            // States
+            if (item.isDirty) {
+                ctx.fillStyle = '#8b4513';
+                ctx.beginPath(); ctx.arc(bx+w*0.3, by+h*0.4, 4, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(bx+w*0.8, by+h*0.7, 5, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(bx+w*0.5, by+h*0.2, 3, 0, Math.PI*2); ctx.fill();
+            }
+            if (item.isWet) {
+                ctx.fillStyle = '#3498db';
+                ctx.fillRect(bx+w*0.2, by+h*0.3, 2, 6);
+                ctx.fillRect(bx+w*0.7, by+h*0.5, 2, 5);
+            }
+
+            // Temp Aura
+            if (item.temp === 'hot') {
+                ctx.strokeStyle = 'rgba(231, 76, 60, 0.5)';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(bx-4, by-4, w+8, h+8);
+                // Steam
+                if(Math.floor(performance.now()/200)%2===0) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.fillRect(bx+w/2, by-15, 3, 10);
+                }
+            } else if (item.temp === 'warm') {
+                ctx.strokeStyle = 'rgba(230, 126, 34, 0.5)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(bx-2, by-2, w+4, h+4);
+            } else if (item.temp === 'cold') {
+                ctx.strokeStyle = 'rgba(52, 152, 219, 0.5)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(bx-2, by-2, w+4, h+4);
+            }
+
+            // Lids
+            if (item.lid === 'nipple') {
+                ctx.fillStyle = '#f39c12'; // Ring
+                ctx.fillRect(bx - 2, by - 6, w + 4, 6);
+                ctx.fillStyle = '#f1c27d'; // Nipple
+                ctx.beginPath(); ctx.arc(bx + w/2, by - 6, w*0.3, Math.PI, 0); ctx.fill();
+            } else if (item.lid === 'straw') {
+                ctx.fillStyle = '#bdc3c7'; // flat lid
+                ctx.fillRect(bx - 2, by - 4, w + 4, 4);
+                ctx.strokeStyle = '#e74c3c'; // straw
+                ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.moveTo(bx + w/2, by); ctx.lineTo(bx + w*0.8, by - 20); ctx.stroke();
+            }
+
+            // Ruined visual
+            if (item.ruined) {
+                ctx.strokeStyle = 'rgba(231, 76, 60, 0.9)';
+                ctx.lineWidth = 6;
+                ctx.beginPath(); ctx.moveTo(bx - 5, by - 5); ctx.lineTo(bx + w + 5, by + h + 5); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(bx + w + 5, by - 5); ctx.lineTo(bx - 5, by + h + 5); ctx.stroke();
+            }
+        }
+
+        function drawOrderTicket() {
+            if (!currentOrder) return;
+            
+            ctx.fillStyle = '#fdf5e6';
+            ctx.fillRect(10, 40, 160, 200);
+            ctx.fillStyle = '#e67e22'; // pin
+            ctx.fillRect(85, 35, 10, 10);
+
+            ctx.fillStyle = '#111';
+            ctx.font = '10px "Press Start 2P"';
+            ctx.textAlign = 'left';
+            
+            // Name (Wrapped roughly)
+            let words = currentOrder.name.split(' ');
+            ctx.fillText(words[0], 15, 55);
+            if(words[1]) ctx.fillText(words[1], 15, 70);
+
+            ctx.fillRect(15, 80, 140, 2); // divider
+
+            // Checklist helper function
+            function drawCheck(y, text, condition) {
+                ctx.strokeStyle = '#111';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(15, y-8, 8, 8);
+                if (condition) {
+                    ctx.fillStyle = '#27ae60';
+                    ctx.fillText('v', 15, y);
+                }
+                ctx.fillStyle = '#333';
+                ctx.fillText(text, 28, y);
+            }
+
+            // Evaluate current progress
+            const c = currentItem;
+            let hasItem = c !== null;
+            let yPos = 100;
+
+            drawCheck(yPos, currentOrder.type.toUpperCase(), hasItem && c.type === currentOrder.type);
+            yPos += 16;
+            
+            drawCheck(yPos, "CLEAN&DRY", hasItem && !c.isDirty && !c.isWet);
+            yPos += 16;
+
+            if (currentOrder.water > 0) {
+                drawCheck(yPos, currentOrder.water + " WATER", hasItem && c.water === currentOrder.water);
+                yPos += 16;
+            }
+
+            if (currentOrder.formula > 0) {
+                drawCheck(yPos, currentOrder.formula + " POWDER", hasItem && c.formula === currentOrder.formula);
+                yPos += 16;
+            }
+
+            drawCheck(yPos, currentOrder.temp.toUpperCase(), hasItem && c.temp === currentOrder.temp);
+            yPos += 16;
+            
+            if (currentOrder.mixed !== 'none') {
+                drawCheck(yPos, currentOrder.mixed.toUpperCase(), hasItem && c.mixed === currentOrder.mixed);
+                yPos += 16;
+            }
+            
+            if (currentOrder.lid) {
+                drawCheck(yPos, currentOrder.lid.toUpperCase(), hasItem && c.lid === currentOrder.lid);
+            }
+        }
+
+        function draw() {
+            // Kitchen Background
+            ctx.fillStyle = '#2c3e50';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            
+            // Checkerboard Wall
+            for(let i=0; i<GAME_WIDTH/20; i++) {
+                for(let j=0; j<GAME_HEIGHT/2/20; j++) {
+                    ctx.fillStyle = (i+j)%2===0 ? '#16a085' : '#1abc9c';
+                    ctx.fillRect(i*20, j*20, 20, 20);
+                }
+            }
+
+            // Countertop
+            const counterY = GAME_HEIGHT / 2 + 20;
+            ctx.fillStyle = '#7f8c8d'; // Stainless steel
+            ctx.fillRect(0, counterY, GAME_WIDTH, GAME_HEIGHT - counterY);
+            ctx.fillStyle = '#95a5a6';
+            ctx.fillRect(0, counterY, GAME_WIDTH, 10);
+
+            if (gameState === 'START') return;
+
+            // Draw Order
+            drawOrderTicket();
+
+            // Draw Bunny Chef
+            drawBunny(GAME_WIDTH - 100, counterY - 50);
+
+            // Draw Current Item on Counter
+            if (currentItem) {
+                // Drop shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath(); ctx.ellipse(GAME_WIDTH/2, counterY + 80, 25, 5, 0, 0, Math.PI*2); ctx.fill();
+                
+                drawItem(currentItem, GAME_WIDTH / 2, counterY + 80);
+            }
+
+            // Particles & Floats
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = Math.max(0, p.life);
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), 4, 4); 
+            });
+            ctx.globalAlpha = 1.0;
+
+            floatTexts.forEach(ft => {
+                ctx.fillStyle = ft.color;
+                ctx.globalAlpha = Math.max(0, ft.life);
+                ctx.font = '12px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.fillText(ft.text, ft.x, ft.y);
+            });
+            ctx.globalAlpha = 1.0;
+        }
+
+        function gameLoop(timestamp) {
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+            if (dt > 100) dt = 16; 
+
+            update(dt);
+            draw();
+
+            if (gameState === 'PLAY') {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Boot
+        draw();
+
+        if (urlParams.get('autoStart') === 'true') {
+            startGame();
+        }
+
+    </script>
+</body>
+</html>
