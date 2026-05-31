@@ -105,5 +105,143 @@ service cloud.firestore {
                                request.resource.data.progression.keys().hasOnly(['age', 'xp', 'hunger', 'happiness'])
                              ));
     }
+
+    function isValidProgressionV3(p) {
+      return p is map &&
+        p.keys().hasOnly(['age', 'xp', 'coins']) &&
+        p.age is number && p.age >= 0 &&
+        p.xp is number && p.xp >= 0 &&
+        p.coins is number && p.coins >= 0;
+    }
+
+    function isValidUserV3Write(data) {
+      return (!('selectedAnimalId' in data) || validStringLength(data.selectedAnimalId, 1, 20)) &&
+        (!('petName' in data) || validStringLength(data.petName, 0, 50)) &&
+        (!('progression' in data) || isValidProgressionV3(data.progression)) &&
+        (!('gameProgress' in data) || data.gameProgress is map) &&
+        (!('unlockedCosmetics' in data) || data.unlockedCosmetics is list) &&
+        (!('equippedCosmetics' in data) || data.equippedCosmetics is map) &&
+        (!('chests' in data) || data.chests is list);
+    }
+
+    match /users_v3/{userId} {
+      allow read: if isAuthenticated();
+      allow delete: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidUserV3Write(request.resource.data);
+    }
+
+    function isValidLeaderboardEntryV3(data, expectedGameId) {
+      return data.userId is string && data.userId == request.auth.uid &&
+        data.gameId is string && data.gameId == expectedGameId &&
+        (!('score' in data) || (data.score is number && data.score >= 0)) &&
+        (!('stars' in data) || (data.stars is number && data.stars >= 0 && data.stars <= 3)) &&
+        (!('totalStars' in data) || (data.totalStars is number && data.totalStars >= 0)) &&
+        (!('playerName' in data) || validStringLength(data.playerName, 1, 50)) &&
+        (!('animalId' in data) || validStringLength(data.animalId, 1, 20)) &&
+        (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    match /leaderboards_v3/{gameId}/entries/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        isOwner(userId) &&
+        isValidLeaderboardEntryV3(request.resource.data, gameId) &&
+        request.resource.data.keys().hasAll(['userId', 'gameId', 'score', 'playerName', 'animalId', 'createdAt']);
+      allow update: if isAuthenticated() &&
+        isOwner(userId) &&
+        uidNotModified() &&
+        request.resource.data.gameId == resource.data.gameId &&
+        isValidLeaderboardEntryV3(request.resource.data, gameId);
+      allow delete: if isOwner(userId);
+    }
+
+    // ===============================================================
+    // Messaging
+    // ===============================================================
+    // World chat: a single global room. Append-only.
+    //   /chat_world/{messageId}
+    //     - userId (string, == auth.uid)
+    //     - petName (string, 1..50)
+    //     - animalId (string, 1..20)
+    //     - text (string, 1..200)
+    //     - createdAt (timestamp)
+    //
+    // DMs: per-conversation document with a messages subcollection.
+    //   /chat_dms/{conversationId}            (conversationId = sorted uids joined with '_')
+    //     - participants (list of 2 uids)
+    //     - participantNames (map uid -> petName)
+    //     - participantAnimals (map uid -> animalId)
+    //     - lastMessage (string, 1..200)
+    //     - lastMessageAt (timestamp)
+    //     - lastMessageBy (string == auth.uid for writer)
+    //   /chat_dms/{conversationId}/messages/{messageId}
+    //     - userId (string, == auth.uid, must be a participant)
+    //     - text (string, 1..200)
+    //     - createdAt (timestamp)
+    // ===============================================================
+
+    function isValidWorldMessage(data) {
+      return hasOnlyAllowedFields(['userId', 'petName', 'animalId', 'text', 'createdAt']) &&
+             data.keys().hasAll(['userId', 'petName', 'animalId', 'text', 'createdAt']) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             validStringLength(data.petName, 1, 50) &&
+             validStringLength(data.animalId, 1, 20) &&
+             validStringLength(data.text, 1, 200) &&
+             data.createdAt is timestamp;
+    }
+
+    match /chat_world/{messageId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidWorldMessage(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    function isParticipantOf(convData) {
+      return isAuthenticated() && request.auth.uid in convData.participants;
+    }
+
+    function isValidConversation(data) {
+      return hasOnlyAllowedFields(['participants', 'participantNames', 'participantAnimals', 'lastMessage', 'lastMessageAt', 'lastMessageBy']) &&
+             data.keys().hasAll(['participants', 'participantNames', 'participantAnimals', 'lastMessage', 'lastMessageAt', 'lastMessageBy']) &&
+             data.participants is list &&
+             data.participants.size() == 2 &&
+             request.auth.uid in data.participants &&
+             data.participantNames is map &&
+             data.participantAnimals is map &&
+             validStringLength(data.lastMessage, 1, 200) &&
+             data.lastMessageAt is timestamp &&
+             data.lastMessageBy is string && data.lastMessageBy == request.auth.uid;
+    }
+
+    function isValidConversationUpdate(prevData, newData) {
+      return hasOnlyAllowedFields(['participants', 'participantNames', 'participantAnimals', 'lastMessage', 'lastMessageAt', 'lastMessageBy']) &&
+             newData.participants == prevData.participants &&
+             newData.participantNames == prevData.participantNames &&
+             validStringLength(newData.lastMessage, 1, 200) &&
+             newData.lastMessageAt is timestamp &&
+             newData.lastMessageBy is string && newData.lastMessageBy == request.auth.uid;
+    }
+
+    match /chat_dms/{conversationId} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.participants;
+      allow create: if isValidConversation(request.resource.data);
+      allow update: if isAuthenticated() &&
+                    request.auth.uid in resource.data.participants &&
+                    isValidConversationUpdate(resource.data, request.resource.data);
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() &&
+                    request.auth.uid in get(/databases/$(database)/documents/chat_dms/$(conversationId)).data.participants;
+        allow create: if isAuthenticated() &&
+                      request.auth.uid in get(/databases/$(database)/documents/chat_dms/$(conversationId)).data.participants &&
+                      hasOnlyAllowedFields(['userId', 'text', 'createdAt']) &&
+                      request.resource.data.keys().hasAll(['userId', 'text', 'createdAt']) &&
+                      request.resource.data.userId == request.auth.uid &&
+                      validStringLength(request.resource.data.text, 1, 200) &&
+                      request.resource.data.createdAt is timestamp;
+        allow update, delete: if false;
+      }
+    }
   }
 }

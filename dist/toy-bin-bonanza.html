@@ -102,7 +102,7 @@
             transform: scale(0.9);
         }
 
-        .star { color: #555; font-size: 16px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star { color: #555; font-size: 26px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
         .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
         @keyframes pop {
             0% { transform: scale(1); }
@@ -131,7 +131,7 @@
                     <span id="star-3" class="star">★</span>
                 </div>
                 <div>TIME: <span id="timer-display" class="text-white">30</span></div>
-                <div>SCORE: <span id="score-display" class="text-green-400">0</span></div>
+                <div>CAUGHT: <span id="score-display" class="text-green-400">0</span></div>
                 <div class="flex gap-1" id="lives-display">
                     <!-- Lives populated by JS -->
                 </div>
@@ -163,7 +163,7 @@
                 <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
                 <span class="star empty text-5xl drop-shadow-lg">★</span>
             </div>
-            <p class="text-white text-lg mb-2">SCORE: <span id="final-score" class="text-yellow-300 font-bold">0</span></p>
+            <p class="text-white text-lg mb-2">CAUGHT: <span id="final-score" class="text-yellow-300 font-bold">0</span></p>
             <p class="text-gray-300 text-sm mb-8">HIGH SCORE: <span id="final-highscore" class="font-bold">0</span></p>
             <div class="flex flex-col gap-4 w-full max-w-[200px] mx-auto pointer-events-auto">
                 <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
@@ -212,37 +212,36 @@
 
         // Game State Variables
         const urlParams = new URLSearchParams(window.location.search);
-        const currentLevelIndex = parseInt(urlParams.get('level')) || 1;
-        
+        const GAME_ID = 'toy_bin_bonanza';
+        // Per SCORING_GUIDE.md §6: clamp to 1..5; reject 0/negative/non-numeric.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevelIndex = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
+
+        // timeLimit matches the doc's "spawned over Ns" windows (28/28/38/38/43s).
         const LEVEL_CONFIGS = [
-            { targetToys: 15, timeLimit: 30000 },
-            { targetToys: 20, timeLimit: 30000 },
-            { targetToys: 25, timeLimit: 40000 },
-            { targetToys: 30, timeLimit: 40000 },
-            { targetToys: 40, timeLimit: 45000 }
+            { targetToys: 15, timeLimit: 28000 },
+            { targetToys: 20, timeLimit: 28000 },
+            { targetToys: 25, timeLimit: 38000 },
+            { targetToys: 30, timeLimit: 38000 },
+            { targetToys: 40, timeLimit: 43000 }
         ];
-        const config = LEVEL_CONFIGS[Math.min(currentLevelIndex - 1, 4)];
-        
+        const config = LEVEL_CONFIGS[currentLevelIndex - 1];
+
         let gameState = 'START'; // START, PLAY, GAMEOVER
-        let score = 0;
         let toysCaught = 0;
         let toysDropped = 0;
         let toysSpawned = 0;
         let timeLeft = config.timeLimit;
-        let earnedStars = 3;
+        let earnedStars = 0;
+        let resultPosted = false;
         
-        // Safely load high score
+        // Safely load high score (best caught/round, per canonical score formula).
         let highScore = 0;
-        try {
-            highScore = localStorage.getItem('rabbitHighScore') || 0;
-        } catch (e) {
-            console.warn("Local storage unavailable.");
-        }
         highScoreEl.innerText = highScore;
         
         let lastTime = 0;
-        let spawnTimer = 0;
-        let spawnInterval = 1500;
+        let roundElapsed = 0;
+        const SPAWN_END_BUFFER_MS = 2000;
         let toys = [];
         let particles = [];
         let shakeTimer = 0;
@@ -303,10 +302,10 @@
         const startExitBtn = document.getElementById('start-exit-btn');
         const nextLvlBtn = document.getElementById('next-level-btn');
 
-        const exitGame = () => { 
+        const exitGame = () => {
             gameState = 'GAMEOVER';
-            window.parent.postMessage({ type: 'EXIT_GAME', score: score }, '*');
-            score = 0;
+            // Navigation-only: no score/stars. Crediting (if any) already happened on LEVEL_RESULT.
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
         };
 
         // Simple click is best here now that the pointer barrier is gone
@@ -317,41 +316,55 @@
         startExitBtn.addEventListener('click', exitGame);
         if (nextLvlBtn) {
             nextLvlBtn.addEventListener('click', () => {
-                window.parent.postMessage({ type: 'NEXT_LEVEL', score: score, stars: earnedStars, level: currentLevelIndex }, '*');
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: currentLevelIndex }, '*');
             });
         }
 
         // --- Drawing Functions ---
 
         function drawRabbit(x, y, w, h) {
-            // Main body color changed to pink
-            ctx.fillStyle = '#FF99CC'; 
-            // Main body
-            ctx.fillRect(x + w*0.2, y + h*0.2, w*0.6, h*0.5);
-            
-            // Ears
-            ctx.fillRect(x + w*0.3, y - h*0.2, w*0.15, h*0.4);
-            ctx.fillRect(x + w*0.55, y - h*0.2, w*0.15, h*0.4);
-            
-            // Eyes
-            ctx.fillStyle = '#FF0055';
-            ctx.fillRect(x + w*0.35, y + h*0.3, w*0.1, w*0.1);
-            ctx.fillRect(x + w*0.55, y + h*0.3, w*0.1, w*0.1);
-            
-            // Nose color changed to a darker pink/red for contrast
-            ctx.fillStyle = '#CC3366';
-            ctx.fillRect(x + w*0.45, y + h*0.45, w*0.1, w*0.1);
+            // --- Circle-mascot head (matches every other game's bunny) ---
+            // Sized so the snout/jaw clears the toy-bin rim.
+            const headCx = x + w*0.5;
+            const headCy = y + h*0.2;
+            const headR  = w*0.32;
 
-            // Toy Bin
-            ctx.fillStyle = '#8B5A2B'; // Brown bin
+            // Layer 1: Ears (behind the head).
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(headCx - headR*0.55, headCy - headR*1.1, headR*0.32, headR*0.9, -0.2, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(headCx + headR*0.55, headCy - headR*1.1, headR*0.32, headR*0.9,  0.2, 0, Math.PI*2); ctx.fill();
+
+            // Layer 2: Head circle.
+            ctx.beginPath(); ctx.arc(headCx, headCy, headR, 0, Math.PI*2); ctx.fill();
+
+            // Layer 3: Eyes (small dark-red circles).
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx - headR*0.35, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(headCx + headR*0.35, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+
+            // Layer 4: White snout (muzzle) with the nose at its top.
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.ellipse(headCx, headCy + headR*0.45, headR*0.32, headR*0.22, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx, headCy + headR*0.32, headR*0.13, 0, Math.PI*2); ctx.fill();
+
+            // Layer 5: Toy Bin (held in front, so it sits above the body/head bottom).
+            ctx.fillStyle = '#8B5A2B';
             ctx.fillRect(x, y + h*0.6, w, h*0.4);
-            // Bin rim
+            // Bin rim.
             ctx.fillStyle = '#6B4226';
             ctx.fillRect(x - w*0.05, y + h*0.5, w*1.1, h*0.15);
-            // Arms holding bin
-            ctx.fillStyle = '#FF99CC';
-            ctx.fillRect(x - w*0.1, y + h*0.4, w*0.3, h*0.15);
-            ctx.fillRect(x + w*0.8, y + h*0.4, w*0.3, h*0.15);
+
+            // Layer 6: Arms gripping the bin — rounded pink ellipses on
+            // either side of the rim so it reads as "the bunny is holding
+            // the bin", not "the bunny is inside the bin".
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x - w*0.02, y + h*0.56, w*0.14, h*0.1, -0.4, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*1.02, y + h*0.56, w*0.14, h*0.1,  0.4, 0, Math.PI*2); ctx.fill();
+            // Tiny lighter pink paw pads at the gripping ends.
+            ctx.fillStyle = '#ffd2e2';
+            ctx.beginPath(); ctx.ellipse(x + w*0.06, y + h*0.5, w*0.05, h*0.035, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.94, y + h*0.5, w*0.05, h*0.035, 0, 0, Math.PI*2); ctx.fill();
         }
 
         function drawToy(x, y, w, h, type) {
@@ -465,6 +478,44 @@
         let lastHudTime = -1;
         let lastHudScore = -1;
 
+        function spawnNextToy() {
+            if (toysSpawned >= config.targetToys) return;
+            toysSpawned++;
+            const toyWidth = 24;
+            const toyHeight = 24;
+            const baseSpeed = 0.15 + (currentLevelIndex * 0.05);
+            const speedMod = baseSpeed + (toysSpawned / config.targetToys) * 0.1;
+            toys.push({
+                x: Math.random() * (GAME_WIDTH - toyWidth),
+                y: -toyHeight,
+                width: toyWidth,
+                height: toyHeight,
+                type: Math.floor(Math.random() * 5),
+                speed: speedMod
+            });
+        }
+
+        function getSpawnTimeForIndex(index) {
+            // Evenly space spawns; finish ~2s before the round ends so the last toy can fall.
+            if (config.targetToys <= 1) return 0;
+            const spawnWindow = Math.max(500, config.timeLimit - SPAWN_END_BUFFER_MS);
+            return (index * spawnWindow) / (config.targetToys - 1);
+        }
+
+        function spawnDueToys() {
+            while (toysSpawned < config.targetToys && roundElapsed >= getSpawnTimeForIndex(toysSpawned)) {
+                spawnNextToy();
+            }
+        }
+
+        function starDenominator() {
+            // SCORING_GUIDE §2: stars are % of spawned toys; during play use target as goal.
+            if (gameState === 'GAMEOVER' || toysSpawned >= config.targetToys) {
+                return Math.max(toysSpawned, 1);
+            }
+            return config.targetToys;
+        }
+
         function updateHUD() {
             if (lastHudScore !== toysCaught) {
                 scoreEl.innerText = toysCaught + "/" + config.targetToys;
@@ -476,9 +527,9 @@
                 timerEl.innerText = timeSec;
                 lastHudTime = timeSec;
             }
-            
-            let catchPercent = toysCaught / config.targetToys;
-            
+
+            const denom = starDenominator();
+            const catchPercent = denom > 0 ? toysCaught / denom : 0;
             let newStars = 0;
             if (catchPercent >= 0.5) newStars = 1;
             if (catchPercent >= 0.8) newStars = 2;
@@ -499,24 +550,23 @@
         // --- Core Game Logic ---
 
         function startGame() {
-            score = 0;
             toysCaught = 0;
             toysDropped = 0;
             toysSpawned = 0;
             timeLeft = config.timeLimit;
-            earnedStars = 3;
-            document.getElementById('star-1').className = 'star earned';
-            document.getElementById('star-2').className = 'star earned';
-            document.getElementById('star-3').className = 'star earned';
+            earnedStars = 0;
+            resultPosted = false;
+            document.getElementById('star-1').className = 'star';
+            document.getElementById('star-2').className = 'star';
+            document.getElementById('star-3').className = 'star';
             toys = [];
             particles = [];
-            
+
             lastHudTime = -1;
             lastHudScore = -1;
-            
-            const timeForSpawning = config.timeLimit - 2000;
-            spawnInterval = timeForSpawning / config.targetToys;
-            spawnTimer = spawnInterval;
+
+            roundElapsed = 0;
+            spawnDueToys();
             
             rabbit.x = GAME_WIDTH / 2 - rabbit.width / 2;
             movingLeft = false;
@@ -550,30 +600,43 @@
             gameState = 'GAMEOVER';
             zoneLeft.classList.add('hidden');
             zoneRight.classList.add('hidden');
-            
-            if (score > highScore) {
-                highScore = score;
-                try {
-                    localStorage.setItem('rabbitHighScore', highScore);
-                } catch (e) {}
+
+            // Canonical score per SCORING_GUIDE.md §3 = caughtToys.
+            const finalScore = toysCaught;
+
+            // Recompute final stars from catch % of toys actually spawned (SCORING_GUIDE §2).
+            const denom = Math.max(toysSpawned, 1);
+            const catchPercent = denom > 0 ? toysCaught / denom : 0;
+            let finalStars = 0;
+            if (catchPercent >= 0.5) finalStars = 1;
+            if (catchPercent >= 0.8) finalStars = 2;
+            if (catchPercent >= 1.0) finalStars = 3;
+            earnedStars = finalStars;
+
+            if (finalScore > highScore) {
+                highScore = finalScore;
             }
-            
-            finalScoreEl.innerText = toysCaught + "/" + config.targetToys;
+
+            finalScoreEl.innerText = toysCaught + "/" + Math.max(toysSpawned, config.targetToys);
             finalHighScoreEl.innerText = highScore;
             highScoreEl.innerText = highScore;
 
-            if (earnedStars > 0) {
-                document.getElementById('game-over-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
+            const titleEl = document.getElementById('game-over-screen').querySelector('h1');
+            if (finalStars > 0) {
+                titleEl.innerText = "LEVEL CLEAR!";
+                gameOverScreen.classList.remove('bg-red-900/90');
+                gameOverScreen.classList.add('bg-purple-900/90');
             } else {
-                document.getElementById('game-over-screen').querySelector('h1').innerText = "GAME OVER";
-                document.getElementById('game-over-screen').querySelector('h1').className = "text-4xl text-white mb-4 alert-glow";
+                titleEl.innerText = "GAME OVER";
+                gameOverScreen.classList.remove('bg-purple-900/90');
+                gameOverScreen.classList.add('bg-red-900/90');
             }
 
             const finalStarsContainer = document.getElementById('final-stars-display');
             if (finalStarsContainer) {
                 const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
                 finalStarSpans.forEach((star, index) => {
-                    if (index < earnedStars) {
+                    if (index < finalStars) {
                         star.classList.add('earned');
                         star.classList.remove('empty');
                     } else {
@@ -582,21 +645,33 @@
                     }
                 });
             }
-            
+
             const nextLvlBtn = document.getElementById('next-level-btn');
             if (nextLvlBtn) {
-                if (earnedStars > 0 && currentLevelIndex < 5) {
+                if (finalStars > 0 && currentLevelIndex < 5) {
                     nextLvlBtn.classList.remove('hidden');
                 } else {
                     nextLvlBtn.classList.add('hidden');
                 }
             }
 
+            // Win → "Play Again"; fail → "Try Again". Mirrors the other minigames.
+            const restartBtnEl = document.getElementById('restart-btn');
+            if (restartBtnEl) restartBtnEl.innerText = finalStars > 0 ? 'Play Again' : 'Try Again';
+
             gameOverScreen.classList.remove('hidden');
-            
-            // Send score to parent window
-            window.parent.postMessage({ type: 'GAME_OVER', score: score, stars: earnedStars }, '*');
-            score = 0;
+
+            if (!resultPosted) {
+                resultPosted = true;
+                window.parent.postMessage({
+                    type: 'LEVEL_RESULT',
+                    gameId: GAME_ID,
+                    level: currentLevelIndex,
+                    stars: finalStars,
+                    score: finalScore,
+                    outcome: finalStars > 0 ? 'win' : 'fail'
+                }, '*');
+            }
         }
 
         function update(dt) {
@@ -606,7 +681,11 @@
                 shakeTimer -= dt;
             }
 
-            timeLeft -= dt;
+            roundElapsed += dt;
+            timeLeft = config.timeLimit - roundElapsed;
+
+            spawnDueToys();
+
             updateHUD();
             if (timeLeft <= 0) {
                 timeLeft = 0;
@@ -622,28 +701,6 @@
             if (rabbit.x < 0) rabbit.x = 0;
             if (rabbit.x + rabbit.width > GAME_WIDTH) rabbit.x = GAME_WIDTH - rabbit.width;
 
-            // Spawn Toys
-            spawnTimer -= dt;
-            if (spawnTimer <= 0 && toysSpawned < config.targetToys) {
-                toysSpawned++;
-                const toyWidth = 24;
-                const toyHeight = 24;
-                
-                let baseSpeed = 0.15 + (currentLevelIndex * 0.05);
-                let speedMod = baseSpeed + (toysSpawned / config.targetToys) * 0.1;
-
-                toys.push({
-                    x: Math.random() * (GAME_WIDTH - toyWidth),
-                    y: -toyHeight,
-                    width: toyWidth,
-                    height: toyHeight,
-                    type: Math.floor(Math.random() * 5), // 0: block, 1: ball, 2: bear, 3: book, 4: duck
-                    speed: speedMod
-                });
-                
-                spawnTimer = spawnInterval;
-            }
-
             // Update Toys & Collisions
             for (let i = toys.length - 1; i >= 0; i--) {
                 let c = toys[i];
@@ -656,7 +713,6 @@
                     c.y + c.height > rabbit.y
                 ) {
                     toysCaught++;
-                    score += 10;
                     updateHUD();
                     const colors = ['#fde047', '#ef4444', '#8b5a2b', '#1e40af', '#facc15'];
                     createParticles(c.x + c.width/2, c.y + c.height/2, colors[c.type]);

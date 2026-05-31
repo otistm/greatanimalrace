@@ -78,7 +78,7 @@
             text-shadow: 2px 2px 0px #27ae60, -1px -1px 0px #2ecc71;
         }
 
-        .star { color: #555; font-size: 16px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star { color: #555; font-size: 26px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
         .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
         @keyframes pop {
             0% { transform: scale(1); }
@@ -92,6 +92,29 @@
             inset: 0;
             z-index: 10;
             cursor: crosshair;
+        }
+
+        /* Plate-It! button — soft early-submit. Pulses green when the current
+           pieces already match the goal pattern within tolerance, signalling
+           "you can submit now without burning your remaining cuts". */
+        #plate-btn {
+            transition: transform 0.15s, box-shadow 0.2s, opacity 0.2s;
+        }
+        #plate-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+            animation: none !important;
+        }
+        #plate-btn.plate-ready {
+            box-shadow: 0 0 14px rgba(46, 204, 113, 0.95),
+                        0 0 28px rgba(46, 204, 113, 0.55);
+            animation: plate-pulse 0.55s infinite alternate ease-in-out;
+        }
+        @keyframes plate-pulse {
+            from { transform: scale(1); }
+            to   { transform: scale(1.07); }
         }
     </style>
 </head>
@@ -119,6 +142,9 @@
                     <span id="star-3" class="star">★</span>
                 </div>
                 <div class="mt-2 text-right pointer-events-none">CUTS LEFT:<br><span id="cuts-display" class="text-red-400 text-lg">0</span></div>
+                <button id="plate-btn" disabled class="mt-2 bg-green-600 hover:bg-green-500 text-white border-2 border-white rounded text-[9px] sm:text-[10px] px-3 py-2 uppercase tracking-wider pointer-events-auto cursor-pointer">
+                    Plate It!
+                </button>
             </div>
         </div>
 
@@ -127,8 +153,11 @@
             <h1 class="text-3xl sm:text-4xl text-white mb-8 text-glow leading-loose">TINY<br>CHEF</h1>
             <p class="text-gray-300 text-[10px] sm:text-xs mb-8 leading-loose uppercase">
                 Swipe to cut the food.<br>
-                Match the baby plate fractions!<br>
-                Precision is key. Don't buzz!
+                Eyeball the colored portions<br>
+                on the plate and match them.<br>
+                Bend swipes for angle cuts<br>
+                (each segment uses one cut).<br>
+                Tap Plate It! when ready.
             </p>
             <div class="flex flex-col gap-4">
                 <button id="start-btn" class="bg-orange-600 hover:bg-orange-500 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase animate-pulse cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
@@ -152,7 +181,7 @@
             <p class="text-white text-sm mb-6 font-bold">SCORE: <span id="final-score" class="text-yellow-300">0</span></p>
             <div class="flex flex-col gap-4 w-full max-w-[200px] mx-auto">
                 <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
-                    Try Again
+                    Play Again
                 </button>
                 <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
                     Next Level
@@ -194,20 +223,35 @@
 
         // Game State
         const urlParams = new URLSearchParams(window.location.search);
-        const currentLevelIndex = parseInt(urlParams.get('level')) || 1;
-        
+        const GAME_ID = 'tiny_chef';
+        // Per SCORING_GUIDE.md §6: clamp 1..5; reject 0/negative/non-numeric.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevelIndex = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
+
         let gameState = 'START'; // START, PLAY, EVALUATING, GAMEOVER
         let score = 0;
         let dishesCompleted = 0;
         let totalErrors = 0;
         let lastTime = 0;
+        let resultPosted = false;
         
-        // Slicing State
+        // Slicing State — supports multi-segment freeform swipes (angle cuts).
+        // The full pointer path is sampled into `swipePath` during the drag and
+        // simplified with Douglas-Peucker on release. The number of straight
+        // segments after simplification = number of cuts the swipe consumes.
         let isSwiping = false;
-        let swipeStart = null;
-        let swipeCurrent = null;
-        let slashLine = null; // Visual feedback for successful cut
+        let swipePath = [];          // raw sampled pointer positions
+        let lastSampleAt = 0;
+        let liveCutSegments = 0;     // updated during drag for the HUD preview
+        let slashPath = null;        // simplified+extended polyline of last successful cut
         let slashTimer = 0;
+        // Min squared distance between consecutive samples (cuts down on noise).
+        const SAMPLE_MIN_DIST_SQ = 4 * 4;
+        // Douglas-Peucker tolerance (px). Anything below this is considered noise.
+        const SIMPLIFY_TOLERANCE = 8;
+        // How far past the swipe endpoints to extend the cut line. Lets the
+        // player swipe entirely *inside* the food and still cut clean through.
+        const CUT_EXTEND_PX = 2000;
         
         // Level Data
         let currentLevel = null;
@@ -216,30 +260,147 @@
         let initialArea = 0;
 
         let timeLeft = 60000;
-        let earnedStars = 3;
 
-        // Tolerance for Operation mechanic (15% error margin)
-        const ERROR_TOLERANCE = 0.15;
+        // Per MINIGAMES_GUIDE.md §5 Tiny Chef: pass = ≤8% error, 2★ = ≤5%, 3★ = ≤2%.
+        const ERROR_TOLERANCE = 0.08;
+        const TWO_STAR_TOLERANCE = 0.05;
+        const THREE_STAR_TOLERANCE = 0.02;
 
+        // Canonical score (SCORING_GUIDE.md §3): dishes*100 + bonus(stars).
+        function starBonus(stars) {
+            return (stars || 0) * 50;
+        }
+        function canonicalScore(stars) {
+            return dishesCompleted * 100 + starBonus(stars || 0);
+        }
+        function previewStarsFromErrors() {
+            if (dishesCompleted === 0) return 0;
+            const avg = totalErrors / dishesCompleted;
+            if (avg <= THREE_STAR_TOLERANCE) return 3;
+            if (avg <= TWO_STAR_TOLERANCE) return 2;
+            return 1;
+        }
+        function updateLiveStars() {
+            const live = previewStarsFromErrors();
+            for (let i = 1; i <= 3; i++) {
+                const el = document.getElementById('star-' + i);
+                if (!el) continue;
+                el.className = 'star' + (i <= live ? ' earned' : '');
+            }
+        }
+        function postResult(stars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
+            const finalScore = canonicalScore(stars);
+            window.parent.postMessage({
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: currentLevelIndex,
+                stars: stars,
+                score: finalScore,
+                outcome: outcome
+            }, '*');
+        }
+
+        // Per-level dish recipe (goals + cuts) — the actual food assigned to each
+        // dish slot is drawn at random from the FOODS library on every fresh game,
+        // so a player never sees the same series of foods twice in a row.
+        //
+        // Dish counts per level are unchanged (L1=2, L2=3, L3=2, L4=3, L5=4) so
+        // the canonical score curve from §3 is preserved. The variety lives in
+        // the *goal fractions* and *cut counts*: every level mixes at least two
+        // cut patterns, and intricate fractions (1/3, 1/6, 3/8, 0.3, etc.) push
+        // the player past lazy bisection.
         const SERVICES = [
-            // Level 1: 2 simple dishes
-            [ { shape: 'orange', goals: [0.5, 0.5], cuts: 1 }, { shape: 'watermelon', goals: [0.5, 0.5], cuts: 1 } ],
-            // Level 2: 3 simple dishes
-            [ { shape: 'bread', goals: [0.5, 0.5], cuts: 1 }, { shape: 'orange', goals: [0.5, 0.5], cuts: 1 }, { shape: 'watermelon', goals: [0.5, 0.5], cuts: 1 } ],
-            // Level 3: 2 complex dishes
-            [ { shape: 'bread', goals: [0.25, 0.25, 0.25, 0.25], cuts: 2 }, { shape: 'watermelon', goals: [0.5, 0.25, 0.25], cuts: 2 } ],
-            // Level 4: 3 complex dishes
-            [ { shape: 'bread', goals: [0.5, 0.25, 0.25], cuts: 2 }, { shape: 'orange', goals: [0.25, 0.25, 0.5], cuts: 2 }, { shape: 'watermelon', goals: [0.5, 0.25, 0.25], cuts: 2 } ],
-            // Level 5: 4 very complex dishes
-            [ { shape: 'orange', goals: [0.125, 0.125, 0.25, 0.5], cuts: 3 }, { shape: 'watermelon', goals: [0.125, 0.125, 0.25, 0.5], cuts: 3 }, { shape: 'bread', goals: [0.25, 0.25, 0.25, 0.25], cuts: 2 }, { shape: 'orange', goals: [0.25, 0.25, 0.5], cuts: 2 } ]
+            // Level 1 — Warm-up: one symmetric halving, one asymmetric 1-cut.
+            [
+                { goals: [0.5, 0.5], cuts: 1 },                 // straight halves
+                { goals: [1/3, 2/3], cuts: 1 }                  // eyeball a third
+            ],
+            // Level 2 — Mixed cuts: 1-cut and 2-cut dishes side by side.
+            [
+                { goals: [0.25, 0.75], cuts: 1 },               // asymmetric single cut
+                { goals: [0.5, 0.25, 0.25], cuts: 2 },          // halve, then halve a half
+                { goals: [1/3, 1/3, 1/3], cuts: 2 }             // parallel cuts for thirds
+            ],
+            // Level 3 — Intricate 2-cut: no plain halves anywhere.
+            [
+                { goals: [0.25, 0.25, 0.25, 0.25], cuts: 2 },   // quarters via cross-cut
+                { goals: [3/8, 3/8, 1/4], cuts: 2 }             // off-center pair
+            ],
+            // Level 4 — Fancy patterns: chained 3-cut work appears.
+            [
+                { goals: [0.5, 0.25, 0.125, 0.125], cuts: 3 },  // recursive bisect chain
+                { goals: [1/6, 1/3, 1/2], cuts: 2 },            // sixth + third + half
+                { goals: [0.2, 0.3, 0.5], cuts: 2 }             // uneven 20/30/50
+            ],
+            // Level 5 — Gauntlet: every dish is intricate, no repeats.
+            [
+                { goals: [0.125, 0.125, 0.25, 0.5], cuts: 3 },  // progressive halving
+                { goals: [1/6, 1/3, 1/3, 1/6], cuts: 3 },       // mirrored sixths + thirds
+                { goals: [3/8, 1/8, 1/4, 1/4], cuts: 3 },       // mixed eighths + quarters
+                { goals: [0.4, 0.3, 0.2, 0.1], cuts: 3 }        // descending ladder
+            ]
         ];
         const currentService = SERVICES[Math.min(currentLevelIndex - 1, 4)];
 
-        function getFoodColor(shape) {
-            if (shape === 'orange') return '#f39c12';
-            if (shape === 'bread') return '#f5d76e';
-            if (shape === 'watermelon') return '#e74c3c';
-            return '#fff';
+        // Persistent food rotation — backed by localStorage so the cycle survives
+        // every iframe reload (each level transition + Play Again + Try Again all
+        // reload this iframe). The player only ever sees a repeat AFTER they've
+        // cycled through every food in FOODS.
+        const FOOD_CYCLE_KEY = 'tinyChefFoodCycle_v1';
+
+        function loadCycle() {
+            try {
+                const raw = localStorage.getItem(FOOD_CYCLE_KEY);
+                if (!raw) return null;
+                const c = JSON.parse(raw);
+                if (!Array.isArray(c.pool) || typeof c.idx !== 'number') return null;
+                // Defensive: drop the rotation if any stored id has since been
+                // removed/renamed in FOODS.
+                for (const id of c.pool) if (!FOODS[id]) return null;
+                return c;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function saveCycle(cycle) {
+            try {
+                localStorage.setItem(FOOD_CYCLE_KEY, JSON.stringify(cycle));
+            } catch (e) { /* storage disabled — fall back to in-memory only */ }
+        }
+
+        function createCycle(avoidId) {
+            const ids = Object.keys(FOODS).slice();
+            // Fisher-Yates shuffle.
+            for (let i = ids.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [ids[i], ids[j]] = [ids[j], ids[i]];
+            }
+            // Avoid rolling the just-seen food into the first slot of the new
+            // cycle (otherwise the player can see the same food twice in a row
+            // when one rotation ends and the next begins).
+            if (avoidId && ids[0] === avoidId && ids.length > 1) {
+                [ids[0], ids[1]] = [ids[1], ids[0]];
+            }
+            return { pool: ids, idx: 0 };
+        }
+
+        function pickNextFood() {
+            let cycle = loadCycle();
+            let lastSeen = null;
+            if (cycle && cycle.idx >= cycle.pool.length) {
+                // Rotation exhausted — remember the last-seen food and start a
+                // fresh shuffled cycle.
+                lastSeen = cycle.pool[cycle.pool.length - 1];
+                cycle = null;
+            }
+            if (!cycle) cycle = createCycle(lastSeen);
+            const id = cycle.pool[cycle.idx];
+            cycle.idx++;
+            saveCycle(cycle);
+            return id;
         }
 
         // --- Math & Geometry Functions ---
@@ -299,6 +460,209 @@
             return count;
         }
 
+        // ---------- Polyline cut helpers ----------
+        // The angle-cut system treats each swipe as a polyline (1+ straight
+        // segments). The polyline carves the polygon along its actual shape:
+        // each pair of (entry, exit) intersections with the polygon boundary
+        // defines a "strand" that splits one polygon into two. Subsequent
+        // strands recurse on the resulting sub-polygons. The algorithm works
+        // on simple polygons (convex OR non-convex), so post-cut wedges can
+        // themselves be cut by later swipes without breaking.
+
+        function polylineLength(path) {
+            let total = 0;
+            for (let i = 1; i < path.length; i++) {
+                total += Math.hypot(path[i].x - path[i-1].x, path[i].y - path[i-1].y);
+            }
+            return total;
+        }
+
+        // Perpendicular distance from point P to the infinite line through A-B.
+        function perpDistance(P, A, B) {
+            const dy = B.y - A.y, dx = B.x - A.x;
+            const num = Math.abs(dy * P.x - dx * P.y + B.x * A.y - B.y * A.x);
+            const den = Math.hypot(dy, dx);
+            if (den === 0) return Math.hypot(P.x - A.x, P.y - A.y);
+            return num / den;
+        }
+
+        // Douglas-Peucker simplification — drops sample points within `eps`
+        // of the chord, so finger jitter doesn't register as bend points.
+        function douglasPeucker(points, eps) {
+            if (points.length < 3) return points.slice();
+            let maxD = 0, idx = 0;
+            const a = points[0], b = points[points.length - 1];
+            for (let i = 1; i < points.length - 1; i++) {
+                const d = perpDistance(points[i], a, b);
+                if (d > maxD) { maxD = d; idx = i; }
+            }
+            if (maxD > eps) {
+                const left  = douglasPeucker(points.slice(0, idx + 1), eps);
+                const right = douglasPeucker(points.slice(idx), eps);
+                return left.slice(0, -1).concat(right);
+            }
+            return [a, b];
+        }
+
+        // Extend the FIRST and LAST segments of a polyline outward by `dist`,
+        // so the player can swipe entirely inside the food and still cut clean
+        // through. Internal vertices (bend points) are unchanged.
+        function extendPolylineEnds(line, dist) {
+            if (line.length < 2) return line.slice();
+            const out = line.map(p => ({ x: p.x, y: p.y }));
+            const a0 = out[0], b0 = out[1];
+            const len0 = Math.hypot(b0.x - a0.x, b0.y - a0.y);
+            if (len0 > 0.01) {
+                out[0] = { x: a0.x - (b0.x - a0.x) / len0 * dist,
+                           y: a0.y - (b0.y - a0.y) / len0 * dist };
+            }
+            const aN = out[out.length - 2], bN = out[out.length - 1];
+            const lenN = Math.hypot(bN.x - aN.x, bN.y - aN.y);
+            if (lenN > 0.01) {
+                out[out.length - 1] = { x: bN.x + (bN.x - aN.x) / lenN * dist,
+                                        y: bN.y + (bN.y - aN.y) / lenN * dist };
+            }
+            return out;
+        }
+
+        // Ray-casting point-in-polygon (works on simple non-convex polys).
+        function pointInPolygon(p, poly) {
+            let inside = false;
+            for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+                const a = poly[i], b = poly[j];
+                if (((a.y > p.y) !== (b.y > p.y)) &&
+                    (p.x < (b.x - a.x) * (p.y - a.y) / ((b.y - a.y) || 1e-12) + a.x)) {
+                    inside = !inside;
+                }
+            }
+            return inside;
+        }
+
+        // Segment-segment intersection. Returns { pt, t, u } on success where
+        // t is the param along A-B and u along C-D, both in [0,1]. Null on no hit.
+        function segSegIntersect(A, B, C, D) {
+            const denom = (B.x - A.x) * (D.y - C.y) - (B.y - A.y) * (D.x - C.x);
+            if (Math.abs(denom) < 1e-9) return null;
+            const t = ((C.x - A.x) * (D.y - C.y) - (C.y - A.y) * (D.x - C.x)) / denom;
+            const u = ((C.x - A.x) * (B.y - A.y) - (C.y - A.y) * (B.x - A.x)) / denom;
+            const EPS = 1e-7;
+            if (t < -EPS || t > 1 + EPS || u < -EPS || u > 1 + EPS) return null;
+            return {
+                pt: { x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y) },
+                t: Math.max(0, Math.min(1, t)),
+                u: Math.max(0, Math.min(1, u))
+            };
+        }
+
+        function centroidOf(poly) {
+            let cx = 0, cy = 0;
+            for (const p of poly) { cx += p.x; cy += p.y; }
+            return { x: cx / poly.length, y: cy / poly.length };
+        }
+
+        // Compute every intersection between `line` (polyline) and `poly`
+        // boundary, sorted along the line in swipe order.
+        function computeLinePolyEvents(line, poly) {
+            const events = [];
+            for (let li = 0; li < line.length - 1; li++) {
+                const a = line[li], b = line[li + 1];
+                const segEvents = [];
+                for (let pi = 0; pi < poly.length; pi++) {
+                    const c = poly[pi], d = poly[(pi + 1) % poly.length];
+                    const isect = segSegIntersect(a, b, c, d);
+                    if (isect) segEvents.push({
+                        pt: isect.pt, lineSeg: li, lineT: isect.t, polyEdge: pi
+                    });
+                }
+                segEvents.sort((x, y) => x.lineT - y.lineT);
+                for (const ev of segEvents) events.push(ev);
+            }
+            // Merge near-duplicate events (e.g., line crossing exactly through a
+            // polygon vertex registers on both adjacent edges).
+            const merged = [];
+            for (const ev of events) {
+                const last = merged[merged.length - 1];
+                if (last && Math.hypot(last.pt.x - ev.pt.x, last.pt.y - ev.pt.y) < 0.5) continue;
+                merged.push(ev);
+            }
+            return merged;
+        }
+
+        // Split a simple polygon `poly` along an inside path (entry → bends → exit).
+        // entry/exit are events with .polyEdge telling us which polygon edge each
+        // endpoint sits on. Returns [leftPoly, rightPoly] — both simple polygons.
+        function splitPolygonAlongStrand(poly, entry, exit, insidePath) {
+            const n = poly.length;
+            // Side A: insidePath forward, then walk polygon CCW from after exit.polyEdge
+            // back around to entry.polyEdge end (not inclusive of next vertex).
+            const polyA = insidePath.slice();
+            let i = (exit.polyEdge + 1) % n;
+            const stopA = (entry.polyEdge + 1) % n;
+            // Safety bound to avoid infinite loops on malformed input.
+            let guard = n + 1;
+            while (i !== stopA && guard-- > 0) {
+                polyA.push({ x: poly[i].x, y: poly[i].y });
+                i = (i + 1) % n;
+            }
+            // Side B: reversed insidePath, then walk polygon CCW from after
+            // entry.polyEdge back around to exit.polyEdge end.
+            const polyB = insidePath.slice().reverse();
+            let j = (entry.polyEdge + 1) % n;
+            const stopB = (exit.polyEdge + 1) % n;
+            guard = n + 1;
+            while (j !== stopB && guard-- > 0) {
+                polyB.push({ x: poly[j].x, y: poly[j].y });
+                j = (j + 1) % n;
+            }
+            return [polyA, polyB];
+        }
+
+        // Recursive polyline clip. Returns an array of resulting sub-polygons.
+        // If the line doesn't cleanly cut the polygon (0 events, odd events),
+        // returns [poly] unchanged.
+        function clipPolygonByPolyline(poly, line) {
+            const events = computeLinePolyEvents(line, poly);
+            if (events.length < 2) return [poly];
+            // Odd events = swipe endpoint sat exactly on the boundary. Drop the
+            // last event so we still get clean strands.
+            const usable = events.length % 2 === 0
+                ? events
+                : events.slice(0, events.length - 1);
+
+            const entry = usable[0];
+            const exit  = usable[1];
+
+            // Build inside path for this first strand.
+            const insidePath = [{ x: entry.pt.x, y: entry.pt.y }];
+            for (let i = entry.lineSeg + 1; i <= exit.lineSeg; i++) {
+                insidePath.push({ x: line[i].x, y: line[i].y });
+            }
+            insidePath.push({ x: exit.pt.x, y: exit.pt.y });
+
+            // Degenerate strand (entry == exit) — skip this strand and recurse
+            // with the rest of the line on the unchanged polygon.
+            const strandLen = polylineLength(insidePath);
+            if (strandLen < 0.5) {
+                if (usable.length <= 2) return [poly];
+                const rest = [exit.pt].concat(line.slice(exit.lineSeg + 1));
+                return clipPolygonByPolyline(poly, rest);
+            }
+
+            const [polyA, polyB] = splitPolygonAlongStrand(poly, entry, exit, insidePath);
+
+            // Remaining line for further strands: from exit point onward.
+            if (usable.length <= 2) return [polyA, polyB];
+
+            const rest = [exit.pt].concat(line.slice(exit.lineSeg + 1));
+            // Future strands lie entirely in either polyA or polyB. Clip each
+            // recursively; the one that doesn't contain the next strand simply
+            // returns itself.
+            const subA = clipPolygonByPolyline(polyA, rest);
+            const subB = clipPolygonByPolyline(polyB, rest);
+            return subA.concat(subB);
+        }
+        // ---------- end polyline cut helpers ----------
+
         // Split polygon by infinite line A-B
         function splitPolygon(poly, A, B) {
             let leftPoly = [];
@@ -324,25 +688,489 @@
             return { left: leftPoly, right: rightPoly };
         }
 
-        // --- Shape Generators ---
-        function createShape(type, cx, cy) {
-            let pts = [];
-            if (type === 'bread') {
-                pts = [
-                    {x: cx-80, y: cy-80}, {x: cx+80, y: cy-80},
-                    {x: cx+80, y: cy+80}, {x: cx-80, y: cy+80}
-                ];
-            } else if (type === 'orange') {
-                for (let i=0; i<16; i++) {
-                    let angle = (i/16) * Math.PI * 2;
-                    pts.push({ x: cx + Math.cos(angle)*80, y: cy + Math.sin(angle)*80 });
-                }
-            } else if (type === 'watermelon') {
-                pts = [
-                    {x: cx, y: cy-80}, {x: cx+80, y: cy+60}, {x: cx-80, y: cy+60}
-                ];
+        // --- Shape Helpers ---
+        // Every food shape MUST be convex so splitPolygon() produces clean halves.
+        function polyRect(cx, cy, w, h) {
+            const hw = w/2, hh = h/2;
+            return [
+                {x: cx-hw, y: cy-hh}, {x: cx+hw, y: cy-hh},
+                {x: cx+hw, y: cy+hh}, {x: cx-hw, y: cy+hh}
+            ];
+        }
+        function polyCircle(cx, cy, r, n) {
+            n = n || 16;
+            const out = [];
+            for (let i = 0; i < n; i++) {
+                const a = (i/n) * Math.PI * 2;
+                out.push({x: cx + Math.cos(a)*r, y: cy + Math.sin(a)*r});
             }
-            return pts;
+            return out;
+        }
+        function polyEllipse(cx, cy, rx, ry, n) {
+            n = n || 16;
+            const out = [];
+            for (let i = 0; i < n; i++) {
+                const a = (i/n) * Math.PI * 2;
+                out.push({x: cx + Math.cos(a)*rx, y: cy + Math.sin(a)*ry});
+            }
+            return out;
+        }
+        function polyNgon(cx, cy, r, sides) {
+            const out = [];
+            for (let i = 0; i < sides; i++) {
+                const a = -Math.PI/2 + (i/sides) * Math.PI * 2;
+                out.push({x: cx + Math.cos(a)*r, y: cy + Math.sin(a)*r});
+            }
+            return out;
+        }
+        function polyTriUp(cx, cy, w, h) {
+            return [{x: cx, y: cy-h/2}, {x: cx+w/2, y: cy+h/2}, {x: cx-w/2, y: cy+h/2}];
+        }
+        function polyTriDown(cx, cy, w, h) {
+            return [{x: cx-w/2, y: cy-h/2}, {x: cx+w/2, y: cy-h/2}, {x: cx, y: cy+h/2}];
+        }
+        function polyTrapezoid(cx, cy, wTop, wBot, h) {
+            return [
+                {x: cx-wTop/2, y: cy-h/2}, {x: cx+wTop/2, y: cy-h/2},
+                {x: cx+wBot/2, y: cy+h/2}, {x: cx-wBot/2, y: cy+h/2}
+            ];
+        }
+
+        // --- Texture Renderers ---
+        // Each fn paints the food's interior. Caller has already clipped the
+        // canvas to the piece polygon, so painting outside the piece is safe.
+        // p.cx / p.cy is the ORIGINAL food center, so post-cut sub-pieces still
+        // show the right slice of texture.
+
+        function drawTexOrange(p) {
+            ctx.fillStyle = '#d35400';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#fdf5e6';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 75, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#f39c12';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 70, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = '#fdf5e6';
+            ctx.lineWidth = 4;
+            for (let i = 0; i < 8; i++) {
+                const a = (i/8) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(p.cx, p.cy);
+                ctx.lineTo(p.cx + Math.cos(a)*70, p.cy + Math.sin(a)*70);
+                ctx.stroke();
+            }
+            ctx.fillStyle = '#fdf5e6';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 8, 0, Math.PI*2); ctx.fill();
+        }
+        function drawTexWatermelon(p) {
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#2ecc71';
+            ctx.fillRect(p.cx-100, p.cy+45, 200, 30);
+            ctx.fillStyle = '#ecf0f1';
+            ctx.fillRect(p.cx-100, p.cy+40, 200, 5);
+            ctx.fillStyle = '#111';
+            ctx.fillRect(p.cx-20, p.cy-10, 5, 8);
+            ctx.fillRect(p.cx+20, p.cy-10, 5, 8);
+            ctx.fillRect(p.cx, p.cy+15, 5, 8);
+            ctx.fillRect(p.cx-40, p.cy+20, 5, 8);
+            ctx.fillRect(p.cx+40, p.cy+20, 5, 8);
+        }
+        function drawTexBread(p) {
+            ctx.fillStyle = '#d35400';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#f5d76e';
+            ctx.fillRect(p.cx-75, p.cy-75, 150, 150);
+            ctx.fillStyle = '#e67e22';
+            ctx.fillRect(p.cx-40, p.cy-30, 6, 6);
+            ctx.fillRect(p.cx+30, p.cy-50, 8, 5);
+            ctx.fillRect(p.cx+40, p.cy+20, 5, 8);
+            ctx.fillRect(p.cx-20, p.cy+40, 7, 7);
+            ctx.fillRect(p.cx, p.cy, 8, 5);
+        }
+        function drawTexApple(p) {
+            ctx.fillStyle = '#c0392b';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#fdf5e6';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 60, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#f5d76e';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 12, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#1a1a1a';
+            for (let i = 0; i < 5; i++) {
+                const a = -Math.PI/2 + (i/5) * Math.PI * 2;
+                const x = p.cx + Math.cos(a)*15;
+                const y = p.cy + Math.sin(a)*15;
+                ctx.beginPath(); ctx.ellipse(x, y, 2.5, 4, a, 0, Math.PI*2); ctx.fill();
+            }
+        }
+        function drawTexTomato(p) {
+            ctx.fillStyle = '#a93226';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#e74c3c';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 70, 60, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#fef5e7';
+            for (let i = 0; i < 6; i++) {
+                const a = (i/6) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.ellipse(p.cx + Math.cos(a)*30, p.cy + Math.sin(a)*25, 12, 8, a, 0, Math.PI*2);
+                ctx.fill();
+            }
+            ctx.fillStyle = '#f4d03f';
+            for (let i = 0; i < 6; i++) {
+                const a = (i/6) * Math.PI * 2;
+                for (let j = 0; j < 3; j++) {
+                    ctx.fillRect(p.cx + Math.cos(a)*30 - 4 + j*3, p.cy + Math.sin(a)*25 - 1, 2, 3);
+                }
+            }
+        }
+        function drawTexCheese(p) {
+            ctx.fillStyle = '#f1c40f';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#f7dc6f';
+            ctx.fillRect(p.cx-80, p.cy-50, 160, 90);
+            ctx.fillStyle = '#d4ac0d';
+            const holes = [[-30,-10,9],[10,-20,7],[25,15,11],[-20,25,6],[40,-5,5],[-50,-30,7]];
+            for (const h of holes) { ctx.beginPath(); ctx.arc(p.cx+h[0], p.cy+h[1], h[2], 0, Math.PI*2); ctx.fill(); }
+            ctx.fillStyle = '#b9770e';
+            ctx.fillRect(p.cx-100, p.cy-80, 200, 12);
+        }
+        function drawTexCucumber(p) {
+            ctx.fillStyle = '#196f3d';
+            ctx.fillRect(p.cx-110, p.cy-70, 220, 140);
+            ctx.fillStyle = '#a9dfbf';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 90, 40, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#85c895';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 50, 14, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#f4ecc2';
+            for (let i = -3; i <= 3; i++) ctx.fillRect(p.cx + i*12, p.cy-2, 3, 4);
+            ctx.fillStyle = '#27ae60';
+            for (let i = -5; i <= 5; i++) {
+                ctx.fillRect(p.cx + i*18, p.cy-65, 4, 8);
+                ctx.fillRect(p.cx + i*18 + 9, p.cy+58, 4, 8);
+            }
+        }
+        function drawTexBanana(p) {
+            ctx.fillStyle = '#b7950b';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#f7dc6f';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 45, 85, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#7d6608';
+            for (let i = -4; i <= 4; i++) ctx.fillRect(p.cx-1, p.cy + i*15, 3, 4);
+            ctx.beginPath(); ctx.arc(p.cx-15, p.cy-30, 3, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(p.cx+18, p.cy+20, 4, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(p.cx+10, p.cy-50, 3, 0, Math.PI*2); ctx.fill();
+        }
+        function drawTexPizza(p) {
+            ctx.fillStyle = '#cd853f';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#fff5d2';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 70, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#e74c3c';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 65, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#f9e79f';
+            const cheese = [[-30,-20,18],[25,-25,15],[-25,30,16],[30,25,14],[0,0,12],[-50,0,11],[50,0,11]];
+            for (const c of cheese) { ctx.beginPath(); ctx.arc(p.cx+c[0], p.cy+c[1], c[2], 0, Math.PI*2); ctx.fill(); }
+            ctx.fillStyle = '#a93226';
+            const peps = [[-20,-10],[15,-30],[30,10],[-30,25],[10,30],[-5,-35]];
+            for (const pep of peps) { ctx.beginPath(); ctx.arc(p.cx+pep[0], p.cy+pep[1], 8, 0, Math.PI*2); ctx.fill(); }
+        }
+        function drawTexCake(p) {
+            ctx.fillStyle = '#f9e2c0';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(p.cx-90, p.cy-15, 180, 18);
+            ctx.fillStyle = '#c0392b';
+            ctx.fillRect(p.cx-90, p.cy-12, 180, 6);
+            ctx.fillStyle = '#f5b7b1';
+            ctx.fillRect(p.cx-90, p.cy-65, 180, 15);
+            ctx.fillStyle = '#f1948a';
+            for (let i = 0; i < 4; i++) {
+                ctx.beginPath();
+                ctx.arc(p.cx - 60 + i*40, p.cy-65, 8, Math.PI, 2*Math.PI);
+                ctx.fill();
+            }
+            ctx.fillStyle = '#922b21';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy-72, 6, 0, Math.PI*2); ctx.fill();
+        }
+        function drawTexPie(p) {
+            ctx.fillStyle = '#a16640';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#7b3f00';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 65, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#d4a373';
+            for (let i = -2; i <= 2; i++) ctx.fillRect(p.cx + i*20 - 4, p.cy-65, 8, 130);
+            for (let i = -2; i <= 2; i++) ctx.fillRect(p.cx-65, p.cy + i*20 - 4, 130, 8);
+            ctx.strokeStyle = '#8b5a2b';
+            ctx.lineWidth = 8;
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 75, 0, Math.PI*2); ctx.stroke();
+        }
+        function drawTexKiwi(p) {
+            ctx.fillStyle = '#7b5e2c';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#5d3f1b';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 76, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#9ccc65';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 70, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#ecf0f1';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 14, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = '#d4e8b0';
+            ctx.lineWidth = 1.5;
+            for (let i = 0; i < 14; i++) {
+                const a = (i/14) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(p.cx + Math.cos(a)*15, p.cy + Math.sin(a)*15);
+                ctx.lineTo(p.cx + Math.cos(a)*65, p.cy + Math.sin(a)*65);
+                ctx.stroke();
+            }
+            ctx.fillStyle = '#1a1a1a';
+            for (let i = 0; i < 14; i++) {
+                const a = (i/14) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.ellipse(p.cx + Math.cos(a)*30, p.cy + Math.sin(a)*30, 2, 4, a, 0, Math.PI*2);
+                ctx.fill();
+            }
+        }
+        function drawTexLemon(p) {
+            ctx.fillStyle = '#f4d03f';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#fef5c7';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 56, 78, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#f7dc6f';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 50, 72, 0, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = '#fef5c7';
+            ctx.lineWidth = 3;
+            for (let i = 0; i < 10; i++) {
+                const a = (i/10) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(p.cx, p.cy);
+                ctx.lineTo(p.cx + Math.cos(a)*50, p.cy + Math.sin(a)*72);
+                ctx.stroke();
+            }
+        }
+        function drawTexMushroom(p) {
+            ctx.fillStyle = '#f4f4f4';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath();
+            ctx.ellipse(p.cx, p.cy-25, 75, 50, 0, Math.PI, 2*Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            const spots = [[-30,-55,6],[10,-65,8],[40,-45,7],[-15,-35,5],[25,-20,6]];
+            for (const s of spots) { ctx.beginPath(); ctx.arc(p.cx+s[0], p.cy+s[1], s[2], 0, Math.PI*2); ctx.fill(); }
+            ctx.strokeStyle = '#d5dbdb';
+            ctx.lineWidth = 2;
+            for (let i = -6; i <= 6; i++) {
+                ctx.beginPath();
+                ctx.moveTo(p.cx + i*10, p.cy-25);
+                ctx.lineTo(p.cx + i*10, p.cy-15);
+                ctx.stroke();
+            }
+        }
+        function drawTexStrawberry(p) {
+            ctx.fillStyle = '#c0392b';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#e74c3c';
+            ctx.beginPath();
+            ctx.moveTo(p.cx-55, p.cy-60);
+            ctx.lineTo(p.cx+55, p.cy-60);
+            ctx.lineTo(p.cx, p.cy+55);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#f7dc6f';
+            const seeds = [[-30,-40],[-10,-30],[10,-30],[30,-40],[-25,-10],[0,-10],[25,-10],[-15,15],[15,15],[0,35]];
+            for (const s of seeds) { ctx.beginPath(); ctx.ellipse(p.cx+s[0], p.cy+s[1], 3, 5, 0, 0, Math.PI*2); ctx.fill(); }
+            ctx.fillStyle = '#27ae60';
+            for (let i = -3; i <= 3; i++) {
+                ctx.beginPath();
+                ctx.moveTo(p.cx + i*16, p.cy-75);
+                ctx.lineTo(p.cx + i*16 - 8, p.cy-60);
+                ctx.lineTo(p.cx + i*16 + 8, p.cy-60);
+                ctx.closePath(); ctx.fill();
+            }
+        }
+        function drawTexDonut(p) {
+            ctx.fillStyle = '#a47148';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#f5b7b1';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 70, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#a47148';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 22, 0, Math.PI*2); ctx.fill();
+            const sprColors = ['#3498db','#f1c40f','#2ecc71','#9b59b6','#e74c3c'];
+            const sprs = [[-40,-20,0.3],[-10,-45,1.1],[25,-35,0.7],[45,-10,-0.3],[40,20,1.4],[10,40,0.5],[-20,38,1.0],[-45,5,0.8],[0,-30,0.0],[-30,25,1.2],[30,40,-0.4],[-50,-30,0.6]];
+            for (let i = 0; i < sprs.length; i++) {
+                const s = sprs[i];
+                ctx.save();
+                ctx.translate(p.cx+s[0], p.cy+s[1]);
+                ctx.rotate(s[2]);
+                ctx.fillStyle = sprColors[i % sprColors.length];
+                ctx.fillRect(-5, -1, 10, 3);
+                ctx.restore();
+            }
+        }
+        function drawTexCookie(p) {
+            ctx.fillStyle = '#c68e60';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#d4a373';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 65, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#3a1d0e';
+            const chips = [[-30,-25,9],[20,-30,7],[40,5,8],[10,25,7],[-25,20,8],[-50,0,6],[0,-10,7],[30,30,6]];
+            for (const c of chips) { ctx.beginPath(); ctx.arc(p.cx+c[0], p.cy+c[1], c[2], 0, Math.PI*2); ctx.fill(); }
+            ctx.fillStyle = '#7b5e2c';
+            for (let i = 0; i < 10; i++) {
+                const a = (i/10) * Math.PI * 2 + 0.3;
+                ctx.fillRect(p.cx + Math.cos(a)*45, p.cy + Math.sin(a)*45, 2, 2);
+            }
+        }
+        function drawTexSushi(p) {
+            ctx.fillStyle = '#1b2a1f';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#fafafa';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 60, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#e8e3d3';
+            for (let i = 0; i < 24; i++) {
+                const a = (i/24) * Math.PI * 2;
+                const r = 35 + (i%2)*10;
+                ctx.fillRect(p.cx + Math.cos(a)*r, p.cy + Math.sin(a)*r, 3, 5);
+            }
+            ctx.fillStyle = '#e67e22';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 18, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#7dcea0';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 16, 6, Math.PI/4, 0, Math.PI*2); ctx.fill();
+        }
+        function drawTexWaffle(p) {
+            ctx.fillStyle = '#a67c52';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#e6b167';
+            ctx.fillRect(p.cx-75, p.cy-75, 150, 150);
+            ctx.fillStyle = '#9c7c4e';
+            for (let i = -3; i <= 3; i++) {
+                ctx.fillRect(p.cx + i*22 - 1, p.cy-80, 3, 160);
+                ctx.fillRect(p.cx-80, p.cy + i*22 - 1, 160, 3);
+            }
+            ctx.fillStyle = '#f4d6a3';
+            for (let i = -2; i <= 2; i++) {
+                for (let j = -2; j <= 2; j++) {
+                    ctx.fillRect(p.cx + i*22 - 8, p.cy + j*22 - 8, 16, 16);
+                }
+            }
+        }
+        function drawTexPancake(p) {
+            ctx.fillStyle = '#a67c52';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#f1c27d';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 78, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#dfa063';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy-3, 72, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#7b3f00';
+            ctx.beginPath();
+            ctx.moveTo(p.cx-30, p.cy-30);
+            ctx.bezierCurveTo(p.cx-50, p.cy-10, p.cx-25, p.cy+20, p.cx, p.cy+25);
+            ctx.bezierCurveTo(p.cx+30, p.cy+30, p.cx+45, p.cy+5, p.cx+25, p.cy-15);
+            ctx.bezierCurveTo(p.cx+10, p.cy-35, p.cx-20, p.cy-30, p.cx-30, p.cy-30);
+            ctx.fill();
+            ctx.fillStyle = '#f9e79f';
+            ctx.fillRect(p.cx-12, p.cy-15, 24, 12);
+            ctx.fillStyle = '#f4d03f';
+            ctx.fillRect(p.cx-12, p.cy-15, 24, 4);
+        }
+        function drawTexPepper(p) {
+            ctx.fillStyle = '#1e8449';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#abebc6';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 65, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#f4ecc2';
+            for (let i = 0; i < 3; i++) {
+                const a = -Math.PI/2 + i*(2*Math.PI/3);
+                ctx.beginPath();
+                ctx.moveTo(p.cx, p.cy);
+                ctx.lineTo(p.cx + Math.cos(a)*60, p.cy + Math.sin(a)*60);
+                ctx.lineTo(p.cx + Math.cos(a + 0.4)*40, p.cy + Math.sin(a + 0.4)*40);
+                ctx.closePath(); ctx.fill();
+            }
+            ctx.fillStyle = '#fef5e7';
+            for (let i = 0; i < 10; i++) {
+                const a = (i/10) * Math.PI * 2;
+                ctx.fillRect(p.cx + Math.cos(a)*8 - 1, p.cy + Math.sin(a)*8 - 2, 3, 4);
+            }
+        }
+        function drawTexChocolate(p) {
+            ctx.fillStyle = '#3a1d0e';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#6b4226';
+            ctx.fillRect(p.cx-70, p.cy-80, 140, 160);
+            ctx.fillStyle = '#8b5a2b';
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 4; j++) {
+                    ctx.fillRect(p.cx-65 + i*48, p.cy-75 + j*40, 38, 30);
+                }
+            }
+            ctx.fillStyle = '#a87850';
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 4; j++) {
+                    ctx.fillRect(p.cx-65 + i*48 + 2, p.cy-75 + j*40 + 2, 12, 6);
+                }
+            }
+        }
+        function drawTexAvocado(p) {
+            ctx.fillStyle = '#3e2c0a';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#aacc83';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 50, 80, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#dee9a3';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 38, 65, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#5d4037';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy, 22, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#7b5e2c';
+            ctx.beginPath(); ctx.arc(p.cx-6, p.cy-6, 8, 0, Math.PI*2); ctx.fill();
+        }
+        function drawTexEgg(p) {
+            ctx.fillStyle = '#e5e7e9';
+            ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
+            ctx.fillStyle = '#fafafa';
+            ctx.beginPath(); ctx.ellipse(p.cx, p.cy, 70, 85, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#f1c40f';
+            ctx.beginPath(); ctx.arc(p.cx, p.cy-5, 28, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#f9e79f';
+            ctx.beginPath(); ctx.arc(p.cx-8, p.cy-12, 8, 0, Math.PI*2); ctx.fill();
+        }
+
+        // --- Food Library ---
+        // 24 distinct foods. Each has a convex polygon outline (so cuts split
+        // cleanly) plus its own texture renderer. See SCORING_GUIDE.md migration log.
+        const FOODS = {
+            orange:     { label: 'Orange',     color: '#f39c12', shape: (cx, cy) => polyCircle(cx, cy, 80),         draw: drawTexOrange },
+            watermelon: { label: 'Watermelon', color: '#e74c3c', shape: (cx, cy) => [{x:cx,y:cy-80},{x:cx+80,y:cy+60},{x:cx-80,y:cy+60}], draw: drawTexWatermelon },
+            bread:      { label: 'Bread',      color: '#f5d76e', shape: (cx, cy) => polyRect(cx, cy, 160, 160),     draw: drawTexBread },
+            apple:      { label: 'Apple',      color: '#c0392b', shape: (cx, cy) => polyCircle(cx, cy, 70),         draw: drawTexApple },
+            tomato:     { label: 'Tomato',     color: '#e74c3c', shape: (cx, cy) => polyEllipse(cx, cy, 80, 70),    draw: drawTexTomato },
+            cheese:     { label: 'Cheese',     color: '#f1c40f', shape: (cx, cy) => polyTrapezoid(cx, cy, 50, 150, 130), draw: drawTexCheese },
+            cucumber:   { label: 'Cucumber',   color: '#27ae60', shape: (cx, cy) => polyEllipse(cx, cy, 100, 55),   draw: drawTexCucumber },
+            banana:     { label: 'Banana',     color: '#f1c40f', shape: (cx, cy) => polyEllipse(cx, cy, 55, 95),    draw: drawTexBanana },
+            pizza:      { label: 'Pizza',      color: '#e67e22', shape: (cx, cy) => polyCircle(cx, cy, 85),         draw: drawTexPizza },
+            cake:       { label: 'Cake',       color: '#fceabb', shape: (cx, cy) => polyRect(cx, cy, 170, 130),     draw: drawTexCake },
+            pie:        { label: 'Pie',        color: '#d4a373', shape: (cx, cy) => polyCircle(cx, cy, 80),         draw: drawTexPie },
+            kiwi:       { label: 'Kiwi',       color: '#8aaa3a', shape: (cx, cy) => polyCircle(cx, cy, 75),         draw: drawTexKiwi },
+            lemon:      { label: 'Lemon',      color: '#f7dc6f', shape: (cx, cy) => polyEllipse(cx, cy, 65, 85),    draw: drawTexLemon },
+            mushroom:   { label: 'Mushroom',   color: '#c0392b', shape: (cx, cy) => polyEllipse(cx, cy, 75, 90),    draw: drawTexMushroom },
+            strawberry: { label: 'Strawberry', color: '#e74c3c', shape: (cx, cy) => polyTriDown(cx, cy, 130, 150),  draw: drawTexStrawberry },
+            donut:      { label: 'Donut',      color: '#f5b7b1', shape: (cx, cy) => polyCircle(cx, cy, 80),         draw: drawTexDonut },
+            cookie:     { label: 'Cookie',     color: '#c68e60', shape: (cx, cy) => polyCircle(cx, cy, 75),         draw: drawTexCookie },
+            sushi:      { label: 'Sushi Roll', color: '#1b2a1f', shape: (cx, cy) => polyCircle(cx, cy, 70),         draw: drawTexSushi },
+            waffle:     { label: 'Waffle',     color: '#d2a25f', shape: (cx, cy) => polyRect(cx, cy, 160, 160),     draw: drawTexWaffle },
+            pancake:    { label: 'Pancake',    color: '#f1c27d', shape: (cx, cy) => polyCircle(cx, cy, 85),         draw: drawTexPancake },
+            pepper:     { label: 'Pepper',     color: '#27ae60', shape: (cx, cy) => polyNgon(cx, cy, 80, 6),        draw: drawTexPepper },
+            chocolate:  { label: 'Chocolate',  color: '#6b4226', shape: (cx, cy) => polyRect(cx, cy, 150, 170),     draw: drawTexChocolate },
+            avocado:    { label: 'Avocado',    color: '#87a96b', shape: (cx, cy) => polyEllipse(cx, cy, 60, 90),    draw: drawTexAvocado },
+            egg:        { label: 'Egg',        color: '#fafafa', shape: (cx, cy) => polyEllipse(cx, cy, 75, 90),    draw: drawTexEgg }
+        };
+
+        function getFoodColor(id) {
+            return (FOODS[id] && FOODS[id].color) || '#fff';
+        }
+        function getFoodLabel(id) {
+            return (FOODS[id] && FOODS[id].label) || (id || '').toUpperCase();
+        }
+        function createShape(id, cx, cy) {
+            const food = FOODS[id];
+            return food ? food.shape(cx, cy) : polyRect(cx, cy, 160, 160);
         }
 
         // --- Event Listeners ---
@@ -360,27 +1188,53 @@
             if (gameState !== 'PLAY') return;
             e.preventDefault();
             isSwiping = true;
-            swipeStart = getPointerPos(e);
-            swipeCurrent = swipeStart;
+            const p = getPointerPos(e);
+            swipePath = [p];
+            liveCutSegments = 1;
         }
 
         function handleMove(e) {
             if (!isSwiping || gameState !== 'PLAY') return;
             e.preventDefault();
-            swipeCurrent = getPointerPos(e);
+            const p = getPointerPos(e);
+            const last = swipePath[swipePath.length - 1];
+            const dx = p.x - last.x, dy = p.y - last.y;
+            if (dx*dx + dy*dy < SAMPLE_MIN_DIST_SQ) return;
+            swipePath.push(p);
+            // Live preview of how many cuts this swipe will consume.
+            if (swipePath.length >= 2) {
+                const simp = douglasPeucker(swipePath, SIMPLIFY_TOLERANCE);
+                liveCutSegments = Math.max(1, simp.length - 1);
+            }
         }
 
         function handleEnd(e) {
             if (!isSwiping || gameState !== 'PLAY') return;
             e.preventDefault();
             isSwiping = false;
-            
-            // Minimum swipe distance
-            const dx = swipeCurrent.x - swipeStart.x;
-            const dy = swipeCurrent.y - swipeStart.y;
-            if (Math.hypot(dx, dy) < 20) return;
+            // Push final pointer pos so the simplification sees the actual end.
+            try {
+                const p = getPointerPos(e);
+                if (swipePath.length === 0) swipePath.push(p);
+                else {
+                    const last = swipePath[swipePath.length - 1];
+                    if (Math.hypot(p.x - last.x, p.y - last.y) > 0.5) swipePath.push(p);
+                }
+            } catch (_) { /* touchend has no coords on some browsers */ }
 
-            processCut(swipeStart, swipeCurrent);
+            if (swipePath.length < 2) { swipePath = []; return; }
+
+            // Reject ultra-tiny swipes (taps).
+            const start = swipePath[0];
+            const end = swipePath[swipePath.length - 1];
+            const totalLen = polylineLength(swipePath);
+            if (totalLen < 20 && Math.hypot(end.x - start.x, end.y - start.y) < 20) {
+                swipePath = [];
+                return;
+            }
+
+            processSwipe(swipePath);
+            swipePath = [];
         }
 
         swipeSurface.addEventListener('touchstart', handleStart, {passive: false});
@@ -408,15 +1262,16 @@
         setupButton('start-btn', () => initGame(true));
         setupButton('restart-btn', () => initGame(true));
         setupButton('next-btn', () => initGame(false));
+        setupButton('plate-btn', platePresent);
         setupButton('next-level-btn', () => {
-            window.parent.postMessage({ type: 'NEXT_LEVEL', score: score * 10, stars: earnedStars, level: currentLevelIndex }, '*');
+            // Navigation-only per SCORING_GUIDE.md §1.
+            window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: currentLevelIndex }, '*');
         });
-        
+
         // Setup Exit buttons
-        const exitGame = () => { 
+        const exitGame = () => {
             gameLoopRunning = false;
-            window.parent.postMessage({ type: 'EXIT_GAME', score: score }, '*'); 
-            score = 0;
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
         };
         setupButton('exit-btn', exitGame);
         setupButton('hud-exit-btn', exitGame);
@@ -428,12 +1283,16 @@
             document.getElementById('game-container').style.transform = 'translate(10px, 10px)';
             setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(-10px, -10px)'; }, 50);
             setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(0, 0)'; }, 100);
-            
+
             document.getElementById('game-over-reason').innerText = reasonStr;
-            document.getElementById('final-score').innerText = "FAILED";
+            // Numeric canonical score on failure (dishes done so far + 0 star bonus).
+            const failScore = canonicalScore(0);
+            document.getElementById('final-score').innerText = failScore;
             document.getElementById('game-over-screen').querySelector('h1').innerText = "GAME OVER";
             document.getElementById('game-over-screen').querySelector('h1').className = "text-4xl text-white mb-4 alert-glow";
-            
+            gameOverScreen.classList.remove('bg-purple-900/90');
+            gameOverScreen.classList.add('bg-red-900/90');
+
             const finalStarsContainer = document.getElementById('final-stars-display');
             if (finalStarsContainer) {
                 const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
@@ -442,18 +1301,20 @@
                     star.classList.add('empty');
                 });
             }
-            
+
             const nextLevelBtn = document.getElementById('next-level-btn');
             if (nextLevelBtn) {
                 nextLevelBtn.classList.add('hidden');
             }
-            
+
+            // Fail → "Try Again".
+            const restartBtn = document.getElementById('restart-btn');
+            if (restartBtn) restartBtn.innerText = 'Try Again';
+
             gameOverScreen.classList.remove('hidden');
             gameState = 'GAMEOVER';
-            
-            // Send score to parent window
-            window.parent.postMessage({ type: 'GAME_OVER', score: 0, stars: 0 }, '*');
-            score = 0;
+
+            postResult(0, 'fail');
         }
 
         function loadSubLevel(subLvl) {
@@ -475,7 +1336,9 @@
 
         function buildLevel() {
             let config = currentService[dishesCompleted];
-            loadSubLevel(config);
+            // Inject a freshly-picked food into this dish slot. The recipe
+            // (goals + cuts) is fixed per level; the food is randomized.
+            loadSubLevel({ ...config, shape: pickNextFood() });
         }
 
         function initGame(resetAll) {
@@ -484,10 +1347,22 @@
                 dishesCompleted = 0;
                 totalErrors = 0;
                 timeLeft = 60000;
-                earnedStars = 3;
-                document.getElementById('star-1').className = 'star earned';
-                document.getElementById('star-2').className = 'star earned';
-                document.getElementById('star-3').className = 'star earned';
+                resultPosted = false;
+                slashPath = null;
+                slashTimer = 0;
+                swipePath = [];
+                isSwiping = false;
+                const plateBtn0 = document.getElementById('plate-btn');
+                if (plateBtn0) {
+                    plateBtn0.disabled = true;
+                    plateBtn0.classList.remove('plate-ready');
+                }
+                // Food rotation is persisted in localStorage and managed
+                // lazily inside pickNextFood(); no reshuffle needed here.
+                // HUD inits to 0 stars per SCORING_GUIDE.md §3 (no flash).
+                document.getElementById('star-1').className = 'star';
+                document.getElementById('star-2').className = 'star';
+                document.getElementById('star-3').className = 'star';
                 levelEndTime = performance.now() + 60000;
             }
 
@@ -509,55 +1384,128 @@
             }
         }
 
+        // True iff the current pieces match the goal within ERROR_TOLERANCE.
+        // Used by updateHUD() to glow the Plate-It! button when the player
+        // can submit with a passing score.
+        function goalMatches() {
+            if (!currentLevel || pieces.length === 0) return false;
+            const userFracs = pieces.map(p => getArea(p.pts) / initialArea)
+                                    .sort((a, b) => b - a);
+            const goalFracs = [...currentLevel.goals].sort((a, b) => b - a);
+            if (userFracs.length < goalFracs.length) return false;
+            for (let i = 0; i < goalFracs.length; i++) {
+                if (Math.abs(userFracs[i] - goalFracs[i]) > ERROR_TOLERANCE) return false;
+            }
+            return true;
+        }
+
+        // Soft cuts budget: the player can submit the dish at any time after
+        // making at least one cut, instead of being forced to spend every cut
+        // in the recipe. Fixes the "stuck with 1 cut left but the goal needs
+        // more" trap that the freeform-cut system can produce when the player
+        // over-spends the budget on an unintended bent swipe, OR achieves the
+        // goal with fewer cuts than the recipe expected.
+        function platePresent() {
+            if (gameState !== 'PLAY') return;
+            if (!currentLevel) return;
+            if (cutsLeft >= currentLevel.cuts) return; // need at least one cut first
+            gameState = 'EVALUATING';
+            setTimeout(evaluateCuts, 200);
+        }
+
         function updateHUD() {
             scoreEl.innerText = score;
             cutsEl.innerText = cutsLeft;
+            const plateBtn = document.getElementById('plate-btn');
+            if (plateBtn && currentLevel) {
+                const used = cutsLeft < currentLevel.cuts;
+                const ready = used && goalMatches();
+                plateBtn.disabled = !used;
+                plateBtn.classList.toggle('plate-ready', ready);
+            }
         }
 
-        function processCut(start, end) {
+        // Single freeform swipe (1+ segments). Cut budget consumed = number of
+        // straight segments after Douglas-Peucker simplification. Each piece
+        // is clipped along the polyline; resulting sub-pieces drift outward
+        // from the original centroid for a "broken apart" look.
+        function processSwipe(rawPath) {
+            // 1. Simplify the swipe path so finger jitter doesn't add bends.
+            const simplified = douglasPeucker(rawPath, SIMPLIFY_TOLERANCE);
+            if (simplified.length < 2) return;
+            const segments = simplified.length - 1;
+
+            // 2. Refuse the swipe if the player doesn't have enough cuts to
+            // pay for every segment. (No partial polyline cuts.)
+            if (segments > cutsLeft) {
+                slashPath = simplified;
+                slashTimer = 250;
+                return;
+            }
+
+            // 3. Extend the FIRST and LAST segments outward so a swipe that
+            // ends inside the food still cleaves through.
+            const cutLine = extendPolylineEnds(simplified, CUT_EXTEND_PX);
+            const SHIFT = 8;
             let didCut = false;
-            
-            // Iterate backwards to safely splice
-            for (let i = pieces.length - 1; i >= 0; i--) {
+            const newPieces = [];
+
+            for (let i = 0; i < pieces.length; i++) {
                 const piece = pieces[i];
-                const ints = countIntersections(start, end, piece.pts);
-                
-                // If segment crosses the piece (at least 2 intersections)
-                if (ints >= 2) {
+                let result;
+                try {
+                    result = clipPolygonByPolyline(piece.pts, cutLine);
+                } catch (_) {
+                    result = [piece.pts];
+                }
+
+                if (result.length <= 1) {
+                    newPieces.push(piece);
+                    continue;
+                }
+
+                // Filter slivers and shift each sub-piece outward from the
+                // original piece's centroid for a separation effect.
+                const origCenter = centroidOf(piece.pts);
+                let pieceCutOnce = false;
+
+                for (const sub of result) {
+                    if (sub.length < 3) continue;
+                    if (getArea(sub) < 50) continue;
+                    pieceCutOnce = true;
+
+                    const subCenter = centroidOf(sub);
+                    let dx = subCenter.x - origCenter.x;
+                    let dy = subCenter.y - origCenter.y;
+                    const len = Math.hypot(dx, dy);
+                    let sx = 0, sy = 0;
+                    if (len > 0.01) { sx = dx / len * SHIFT; sy = dy / len * SHIFT; }
+
+                    const shifted = sub.map(p => ({ x: p.x + sx, y: p.y + sy }));
+                    newPieces.push({
+                        pts: shifted,
+                        color: getFoodColor(piece.type),
+                        type: piece.type,
+                        cx: piece.cx + sx,
+                        cy: piece.cy + sy
+                    });
+                }
+
+                if (pieceCutOnce) {
                     didCut = true;
-                    const split = splitPolygon(piece.pts, start, end);
-                    
-                    // Filter out tiny slivers
-                    const areaLeft = getArea(split.left);
-                    const areaRight = getArea(split.right);
-                    
-                    pieces.splice(i, 1); // remove original
-
-                    // Calculate separation normal
-                    let nx = -(end.y - start.y);
-                    let ny = (end.x - start.x);
-                    let len = Math.hypot(nx, ny);
-                    nx /= len; ny /= len;
-
-                    const SHIFT = 8; // Pixels to push pieces apart
-
-                    if (areaLeft > 50) {
-                        let shifted = split.left.map(p => ({ x: p.x + nx*SHIFT, y: p.y + ny*SHIFT }));
-                        pieces.push({ pts: shifted, color: getFoodColor(piece.type), type: piece.type, cx: piece.cx + nx*SHIFT, cy: piece.cy + ny*SHIFT });
-                    }
-                    if (areaRight > 50) {
-                        let shifted = split.right.map(p => ({ x: p.x - nx*SHIFT, y: p.y - ny*SHIFT }));
-                        pieces.push({ pts: shifted, color: getFoodColor(piece.type), type: piece.type, cx: piece.cx - nx*SHIFT, cy: piece.cy - ny*SHIFT });
-                    }
+                } else {
+                    // Clip produced only slivers — keep the original piece intact.
+                    newPieces.push(piece);
                 }
             }
 
             if (didCut) {
-                slashLine = { s: start, e: end };
-                slashTimer = 300; // ms
-                cutsLeft--;
+                pieces = newPieces;
+                slashPath = extendPolylineEnds(simplified, 60); // visual flourish
+                slashTimer = 300;
+                cutsLeft -= segments;
                 updateHUD();
-                
+
                 if (cutsLeft <= 0) {
                     gameState = 'EVALUATING';
                     setTimeout(evaluateCuts, 250);
@@ -592,21 +1540,28 @@
             if (passed) {
                 let dishAvgError = errorSum / goalFracs.length;
                 totalErrors += dishAvgError;
-                score += 100;
                 dishesCompleted++;
-                
+                updateLiveStars();
+                score = canonicalScore(previewStarsFromErrors());
+                updateHUD();
+
                 if (dishesCompleted >= currentService.length) {
                     gameState = 'GAMEOVER';
-                    
+
                     let avgError = totalErrors / dishesCompleted;
                     let finalStars = 1;
-                    if (avgError <= 0.10) finalStars = 2; // <= 10% error per piece average
-                    if (avgError <= 0.05) finalStars = 3; // <= 5% error per piece average
-                    
+                    if (avgError <= TWO_STAR_TOLERANCE) finalStars = 2;
+                    if (avgError <= THREE_STAR_TOLERANCE) finalStars = 3;
+
+                    const finalScore = canonicalScore(finalStars);
+                    score = finalScore;
+
                     document.getElementById('game-over-reason').innerText = "Service Complete!";
-                    document.getElementById('final-score').innerText = "CLEARED!";
+                    document.getElementById('final-score').innerText = finalScore;
                     document.getElementById('game-over-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
                     document.getElementById('game-over-screen').querySelector('h1').className = "text-4xl text-white mb-4 text-glow";
+                    gameOverScreen.classList.remove('bg-red-900/90');
+                    gameOverScreen.classList.add('bg-purple-900/90');
                     
                     const finalStarsContainer = document.getElementById('final-stars-display');
                     if (finalStarsContainer) {
@@ -630,10 +1585,13 @@
                             nextLevelBtn.classList.add('hidden');
                         }
                     }
-                    
+
+                    // Win → "Play Again" (replay for a higher star count).
+                    const restartBtn = document.getElementById('restart-btn');
+                    if (restartBtn) restartBtn.innerText = 'Play Again';
+
                     gameOverScreen.classList.remove('hidden');
-                    window.parent.postMessage({ type: 'GAME_OVER', score: score * 10, stars: finalStars }, '*');
-                    score = 0;
+                    postResult(finalStars, 'win');
                 } else {
                     gameState = 'SUCCESS';
                     setTimeout(() => {
@@ -665,75 +1623,257 @@
 
         function drawBunnyChef(x, y) {
             const w = 60, h = 70;
-            
-            // Chef Hat (Clouds)
-            ctx.fillStyle = '#FFFFFF';
-            ctx.beginPath();
-            ctx.arc(x + w*0.3, y - 10, 15, 0, Math.PI*2);
-            ctx.arc(x + w*0.7, y - 10, 15, 0, Math.PI*2);
-            ctx.arc(x + w*0.5, y - 25, 20, 0, Math.PI*2);
-            ctx.fill();
-            // Hat base
-            ctx.fillRect(x + w*0.2, y - 5, w*0.6, 15);
 
-            // Bunny Body
-            ctx.fillStyle = '#FF99CC'; 
-            ctx.fillRect(x, y + h*0.4, w, h*0.6); 
-            
-            // Ears
-            ctx.fillRect(x + w*0.15, y + 5, w*0.2, h*0.4); 
-            ctx.fillRect(x + w*0.65, y + 5, w*0.2, h*0.4); 
-            
-            // Eyes
-            ctx.fillStyle = gameState === 'GAMEOVER' ? '#000000' : '#FF0055';
-            if(gameState === 'GAMEOVER') {
-                // X eyes
-                ctx.font = '10px monospace';
-                ctx.fillText('X', x + w*0.2, y + h*0.65);
-                ctx.fillText('X', x + w*0.65, y + h*0.65);
+            // Layer 1: cotton-ball tail peeking out behind the body on the
+            // left side (chef faces forward, so the tail just shows as a
+            // small white tuft).
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(x + w*0.08, y + h*0.82, w*0.1, 0, Math.PI*2); ctx.fill();
+
+            // Layer 2: soft pink ellipse body (matches the round head).
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.5, y + h*0.78, w*0.42, h*0.22, 0, 0, Math.PI*2); ctx.fill();
+
+            // Layer 2b: tiny white chef-coat strip down the front of the body.
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.ellipse(x + w*0.5, y + h*0.8, w*0.1, h*0.18, 0, 0, Math.PI*2); ctx.fill();
+            // Two coat buttons.
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(x + w*0.5, y + h*0.74, w*0.025, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(x + w*0.5, y + h*0.84, w*0.025, 0, Math.PI*2); ctx.fill();
+
+            // Layer 3: paw feet at the bottom.
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.32, y + h*0.99, w*0.13, h*0.045, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.68, y + h*0.99, w*0.13, h*0.045, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#ffd2e2';
+            ctx.beginPath(); ctx.ellipse(x + w*0.32, y + h*0.99, w*0.06, h*0.02, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.68, y + h*0.99, w*0.06, h*0.02, 0, 0, Math.PI*2); ctx.fill();
+
+            // --- Layer 4: circle-mascot head (matches swaddle-gami / bottle-rama) ---
+            ctx.fillStyle = '#ff99cc';
+            const headCx = x + w*0.5;
+            const headCy = y + h*0.4;
+            const headR  = w*0.4;
+
+            // Ears - ellipses behind the head.
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(headCx - headR*0.55, headCy - headR*1.1, headR*0.32, headR*0.9, -0.2, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(headCx + headR*0.55, headCy - headR*1.1, headR*0.32, headR*0.9,  0.2, 0, Math.PI*2); ctx.fill();
+
+            // Head circle.
+            ctx.beginPath(); ctx.arc(headCx, headCy, headR, 0, Math.PI*2); ctx.fill();
+
+            // Chef Hat (clouds + base) sits above the head/ears.
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(headCx - headR*0.5, headCy - headR*1.55, headR*0.55, 0, Math.PI*2);
+            ctx.arc(headCx + headR*0.5, headCy - headR*1.55, headR*0.55, 0, Math.PI*2);
+            ctx.arc(headCx,              headCy - headR*2.1,  headR*0.75, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillRect(headCx - headR*0.65, headCy - headR*1.35, headR*1.3, headR*0.5);
+
+            // Eyes / X-eyes on game over.
+            if (gameState === 'GAMEOVER') {
+                ctx.fillStyle = '#2c3e50';
+                ctx.font = `${Math.round(headR*0.5)}px "Press Start 2P"`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('x', headCx - headR*0.35, headCy - headR*0.05);
+                ctx.fillText('x', headCx + headR*0.35, headCy - headR*0.05);
             } else {
-                ctx.fillRect(x + w*0.2, y + h*0.5, w*0.15, w*0.15); 
-                ctx.fillRect(x + w*0.65, y + h*0.5, w*0.15, w*0.15);
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath(); ctx.arc(headCx - headR*0.35, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(headCx + headR*0.35, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
             }
-            
-            // Nose
-            ctx.fillStyle = '#CC3366';
-            ctx.fillRect(x + w*0.45, y + h*0.7, w*0.1, w*0.1); 
+
+            // White snout (muzzle), with the nose sitting at the top of it.
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.ellipse(headCx, headCy + headR*0.45, headR*0.32, headR*0.22, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx, headCy + headR*0.32, headR*0.13, 0, Math.PI*2); ctx.fill();
         }
 
-        function drawBabyPlate(cx, cy, r, goals) {
-            // Shadow
-            ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.beginPath(); ctx.arc(cx+3, cy+5, r, 0, Math.PI*2); ctx.fill();
-            
-            // Plate Base
-            ctx.fillStyle = '#ecf0f1';
-            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
-            
-            // Outer Rim
-            ctx.lineWidth = 4;
-            ctx.strokeStyle = '#3498db'; // Baby blue edge
-            ctx.stroke();
+        // ---- Goal plate: shape-aware horizontal strips ----
+        // Lineage:
+        //   v1 (pie wedges)          — visually fun but implied angle cuts.
+        //   v2 (rectangular bar+text) — math homework, hard to map to food.
+        //   v3 (strips on circle)    — visual+geometric, fixed angle-cut trap,
+        //                              but only honest for round food. On a
+        //                              triangle / cheese wedge / hexagon a
+        //                              player who copied the plate's strip
+        //                              boundary at "37% from top" got way off
+        //                              from the [1/3, 2/3] target area
+        //                              because non-circular foods don't have
+        //                              uniform horizontal cross-section.
+        //   v4 (this) — the plate adopts the *current dish's food shape*
+        //               and divides THAT shape into horizontal strips of the
+        //               right area. Now the plate is a literal preview: copy
+        //               the divider position visually onto your food and
+        //               you've made the right area split. The geometric
+        //               estimation game is preserved (no numbers anywhere)
+        //               but the per-shape correction work is done by the
+        //               renderer rather than dumped on the player.
+        const PLATE_PALETTE = [
+            '#5dade2', '#f4d03f', '#58d68d', '#cd6155',
+            '#bb8fce', '#f5b041', '#e8eaed'
+        ];
+        const PLATE_MAX_DIM = 110; // largest bbox dim of the rendered plate
 
-            // Compartment dividers
-            let startAngle = -Math.PI/2; 
-            ctx.strokeStyle = '#bdc3c7';
-            ctx.lineWidth = 3;
-            
-            goals.forEach(g => {
-                let angle = g * Math.PI * 2;
-                ctx.beginPath();
-                ctx.moveTo(cx, cy);
-                ctx.arc(cx, cy, r, startAngle, startAngle + angle);
-                ctx.lineTo(cx, cy);
-                ctx.stroke();
-                
-                // Light tint per compartment
-                ctx.fillStyle = 'rgba(52, 152, 219, 0.1)';
-                ctx.fill();
-                
-                startAngle += angle;
-            });
+        function _polyBBox(poly) {
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const v of poly) {
+                if (v.x < minX) minX = v.x; if (v.y < minY) minY = v.y;
+                if (v.x > maxX) maxX = v.x; if (v.y > maxY) maxY = v.y;
+            }
+            return { minX, minY, maxX, maxY };
+        }
+
+        function _scalePolyToBox(poly, cx, cy, maxDim) {
+            const b = _polyBBox(poly);
+            const w = b.maxX - b.minX, h = b.maxY - b.minY;
+            const s = maxDim / Math.max(w, h, 1);
+            const ocx = (b.minX + b.maxX) / 2, ocy = (b.minY + b.maxY) / 2;
+            return poly.map(v => ({
+                x: cx + (v.x - ocx) * s,
+                y: cy + (v.y - ocy) * s
+            }));
+        }
+
+        // Find the horizontal y inside `poly` where the area ABOVE that y
+        // (smaller-y side) equals targetArea. Bisection on splitPolygon().
+        // splitPolygon's `right` is the side where (P.y - midY) < 0, i.e. above.
+        function _findHorizCutY(poly, targetArea) {
+            const b = _polyBBox(poly);
+            let lo = b.minY, hi = b.maxY;
+            for (let i = 0; i < 28; i++) {
+                const midY = (lo + hi) / 2;
+                const A = { x: b.minX - 1000, y: midY };
+                const B = { x: b.maxX + 1000, y: midY };
+                let topArea = 0;
+                try {
+                    const split = splitPolygon(poly, A, B);
+                    if (split.right && split.right.length >= 3) topArea = getArea(split.right);
+                } catch (_) {}
+                if (topArea < targetArea) lo = midY; else hi = midY;
+            }
+            return (lo + hi) / 2;
+        }
+
+        // For convex `poly`, return the (sorted) x-coords where the horizontal
+        // line y = yC intersects the polygon edges.
+        function _polyHorizIntersect(poly, yC) {
+            const xs = [];
+            for (let i = 0; i < poly.length; i++) {
+                const a = poly[i], b = poly[(i + 1) % poly.length];
+                if (a.y === b.y) continue;
+                if ((a.y <= yC && b.y >= yC) || (a.y >= yC && b.y <= yC)) {
+                    const t = (yC - a.y) / (b.y - a.y);
+                    xs.push(a.x + t * (b.x - a.x));
+                }
+            }
+            xs.sort((a, b) => a - b);
+            return xs;
+        }
+
+        // Cache scaled polygon + chord positions per (foodId, goals, cx, cy).
+        // Recomputing every frame would do ~28 splitPolygon iterations per
+        // chord; trivial in absolute terms but adds up at 60fps.
+        const _plateCache = new Map();
+        function _getPlateData(foodId, goals, cx, cy) {
+            const key = foodId + '|' + goals.join(',') + '|' + cx + ',' + cy;
+            let cached = _plateCache.get(key);
+            if (cached) return cached;
+
+            const rawPoly = createShape(foodId, 0, 0);
+            const scaledPoly = _scalePolyToBox(rawPoly, cx, cy, PLATE_MAX_DIM);
+            const scaledBBox = _polyBBox(scaledPoly);
+            const totalArea = getArea(scaledPoly);
+
+            const chords = [];
+            let cum = 0;
+            for (let i = 0; i < goals.length - 1; i++) {
+                cum += goals[i];
+                chords.push(_findHorizCutY(scaledPoly, cum * totalArea));
+            }
+            cached = { scaledPoly, scaledBBox, chords };
+            _plateCache.set(key, cached);
+            return cached;
+        }
+
+        function _tracePoly(poly) {
+            ctx.beginPath();
+            ctx.moveTo(poly[0].x, poly[0].y);
+            for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+            ctx.closePath();
+        }
+
+        function drawBabyPlate(cx, cy, goals, foodId) {
+            // Header. Short label; the visual carries most of the meaning.
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '8px "Press Start 2P"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillText('MATCH THESE PIECE SIZES', cx, cy - PLATE_MAX_DIM / 2 - 14);
+
+            // Fallback (no current dish yet): empty round plate.
+            if (!foodId || !goals || goals.length === 0) {
+                const r = 50;
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.beginPath(); ctx.arc(cx + 3, cy + 5, r, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#ecf0f1';
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = '#3498db'; ctx.lineWidth = 4;
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+                return;
+            }
+
+            const { scaledPoly, scaledBBox, chords } = _getPlateData(foodId, goals, cx, cy);
+
+            // Drop-shadow of the plate silhouette.
+            ctx.save();
+            ctx.translate(3, 5);
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            _tracePoly(scaledPoly); ctx.fill();
+            ctx.restore();
+
+            // Plate base.
+            ctx.fillStyle = '#ecf0f1';
+            _tracePoly(scaledPoly); ctx.fill();
+
+            // Colored strips, clipped to the plate's polygon silhouette.
+            ctx.save();
+            _tracePoly(scaledPoly); ctx.clip();
+
+            let yTop = scaledBBox.minY - 2;
+            const stripX = scaledBBox.minX - 5;
+            const stripW = (scaledBBox.maxX - scaledBBox.minX) + 10;
+            for (let i = 0; i < goals.length; i++) {
+                const yBot = (i < goals.length - 1) ? chords[i] : (scaledBBox.maxY + 2);
+                ctx.fillStyle = PLATE_PALETTE[i % PLATE_PALETTE.length];
+                ctx.fillRect(stripX, yTop, stripW, yBot - yTop);
+                yTop = yBot;
+            }
+            ctx.restore();
+
+            // Chord dividers — drawn as the literal chord segments inside the
+            // polygon so each divider stops cleanly at the plate's edge.
+            ctx.strokeStyle = '#2c3e50';
+            ctx.lineWidth = 2;
+            for (const yC of chords) {
+                const xs = _polyHorizIntersect(scaledPoly, yC);
+                if (xs.length >= 2) {
+                    ctx.beginPath();
+                    ctx.moveTo(xs[0], yC);
+                    ctx.lineTo(xs[xs.length - 1], yC);
+                    ctx.stroke();
+                }
+            }
+
+            // Outer rim on top so it sits above the strips.
+            ctx.strokeStyle = '#3498db';
+            ctx.lineWidth = 4;
+            _tracePoly(scaledPoly); ctx.stroke();
         }
 
         function draw() {
@@ -743,8 +1883,13 @@
 
             if (gameState === 'START') return;
 
-            // Draw Baby Plate Goal
-            drawBabyPlate(GAME_WIDTH / 2, 120, 60, currentLevel ? currentLevel.goals : []);
+            // Draw goal proportions tray (replaces the old pie-wedge plate
+            // which wrongly implied wedge / angle cuts were required).
+            drawBabyPlate(
+                GAME_WIDTH / 2, 120,
+                currentLevel ? currentLevel.goals : [],
+                currentLevel ? currentLevel.shape : null
+            );
 
             // Draw Cutting Board
             ctx.fillStyle = '#d35400';
@@ -759,12 +1904,13 @@
 
             // Draw Food Name on Cutting Board
             if (currentLevel) {
+                const label = getFoodLabel(currentLevel.shape).toUpperCase();
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
                 ctx.font = '12px "Press Start 2P"';
                 ctx.textAlign = 'center';
-                ctx.fillText(`- ${currentLevel.shape.toUpperCase()} -`, GAME_WIDTH / 2 + 2, cbY + 37);
+                ctx.fillText(`- ${label} -`, GAME_WIDTH / 2 + 2, cbY + 37);
                 ctx.fillStyle = '#ffffff';
-                ctx.fillText(`- ${currentLevel.shape.toUpperCase()} -`, GAME_WIDTH / 2, cbY + 35);
+                ctx.fillText(`- ${label} -`, GAME_WIDTH / 2, cbY + 35);
             }
 
             // Draw Bunny Chef at bottom
@@ -783,63 +1929,15 @@
                 ctx.closePath();
                 ctx.clip(); // Restrict drawing to inside this piece
 
-                // 2. Draw Detailed Food Texture based on original center
-                if (p.type === 'watermelon') {
-                    // Red flesh
-                    ctx.fillStyle = '#e74c3c';
+                // 2. Dispatch to the per-food texture renderer. Falls back to
+                // a flat fill if the food id is unknown (defensive only — every
+                // food in FOODS provides a draw fn).
+                const food = FOODS[p.type];
+                if (food && food.draw) {
+                    food.draw(p);
+                } else {
+                    ctx.fillStyle = p.color || '#fff';
                     ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
-                    // Green rind at bottom
-                    ctx.fillStyle = '#2ecc71';
-                    ctx.fillRect(p.cx-100, p.cy+45, 200, 30);
-                    // White pith line
-                    ctx.fillStyle = '#ecf0f1';
-                    ctx.fillRect(p.cx-100, p.cy+40, 200, 5);
-                    // Seeds
-                    ctx.fillStyle = '#111';
-                    ctx.fillRect(p.cx-20, p.cy-10, 5, 8);
-                    ctx.fillRect(p.cx+20, p.cy-10, 5, 8);
-                    ctx.fillRect(p.cx, p.cy+15, 5, 8);
-                    ctx.fillRect(p.cx-40, p.cy+20, 5, 8);
-                    ctx.fillRect(p.cx+40, p.cy+20, 5, 8);
-                } 
-                else if (p.type === 'orange') {
-                    // Orange rind
-                    ctx.fillStyle = '#d35400';
-                    ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
-                    // White pith
-                    ctx.fillStyle = '#fdf5e6';
-                    ctx.beginPath(); ctx.arc(p.cx, p.cy, 75, 0, Math.PI*2); ctx.fill();
-                    // Inner flesh
-                    ctx.fillStyle = '#f39c12';
-                    ctx.beginPath(); ctx.arc(p.cx, p.cy, 70, 0, Math.PI*2); ctx.fill();
-                    // Segments
-                    ctx.strokeStyle = '#fdf5e6';
-                    ctx.lineWidth = 4;
-                    for(let i=0; i<8; i++) {
-                        let angle = (i/8) * Math.PI * 2;
-                        ctx.beginPath();
-                        ctx.moveTo(p.cx, p.cy);
-                        ctx.lineTo(p.cx + Math.cos(angle)*70, p.cy + Math.sin(angle)*70);
-                        ctx.stroke();
-                    }
-                    // Center pith
-                    ctx.fillStyle = '#fdf5e6';
-                    ctx.beginPath(); ctx.arc(p.cx, p.cy, 8, 0, Math.PI*2); ctx.fill();
-                }
-                else if (p.type === 'bread') {
-                    // Dark Crust
-                    ctx.fillStyle = '#d35400';
-                    ctx.fillRect(p.cx-100, p.cy-100, 200, 200);
-                    // Light crumb
-                    ctx.fillStyle = '#f5d76e';
-                    ctx.fillRect(p.cx-75, p.cy-75, 150, 150);
-                    // Bread texture (air pockets)
-                    ctx.fillStyle = '#e67e22';
-                    ctx.fillRect(p.cx-40, p.cy-30, 6, 6);
-                    ctx.fillRect(p.cx+30, p.cy-50, 8, 5);
-                    ctx.fillRect(p.cx+40, p.cy+20, 5, 8);
-                    ctx.fillRect(p.cx-20, p.cy+40, 7, 7);
-                    ctx.fillRect(p.cx, p.cy, 8, 5);
                 }
 
                 ctx.restore(); // Remove clipping
@@ -856,27 +1954,67 @@
                 ctx.stroke();
             });
 
-            // Draw swipe trail
-            if (isSwiping && swipeStart && swipeCurrent) {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-                ctx.lineWidth = 4;
+            // Draw in-progress freeform swipe trail (raw sample path).
+            if (isSwiping && swipePath.length > 1) {
+                // Faint raw-path trail so the player sees what they actually drew.
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+                ctx.lineWidth = 3;
                 ctx.beginPath();
-                ctx.moveTo(swipeStart.x, swipeStart.y);
-                ctx.lineTo(swipeCurrent.x, swipeCurrent.y);
+                ctx.moveTo(swipePath[0].x, swipePath[0].y);
+                for (let i = 1; i < swipePath.length; i++) {
+                    ctx.lineTo(swipePath[i].x, swipePath[i].y);
+                }
                 ctx.stroke();
+
+                // Bright simplified preview overlay — shows the cut shape that
+                // will actually be applied. Bend points are emphasized with dots
+                // so the player can see how many segments their swipe became.
+                const preview = douglasPeucker(swipePath, SIMPLIFY_TOLERANCE);
+                if (preview.length >= 2) {
+                    ctx.strokeStyle = liveCutSegments > cutsLeft
+                        ? 'rgba(255, 80, 80, 0.95)'      // red = too many cuts
+                        : 'rgba(255, 255, 255, 0.95)';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(preview[0].x, preview[0].y);
+                    for (let i = 1; i < preview.length; i++) ctx.lineTo(preview[i].x, preview[i].y);
+                    ctx.stroke();
+
+                    // Bend dots (skip the very first/last points).
+                    if (preview.length > 2) {
+                        ctx.fillStyle = 'rgba(255, 215, 0, 0.95)';
+                        for (let i = 1; i < preview.length - 1; i++) {
+                            ctx.beginPath();
+                            ctx.arc(preview[i].x, preview[i].y, 5, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+
+                    // Live cut-cost badge near the cursor.
+                    const tip = preview[preview.length - 1];
+                    const badge = `${liveCutSegments} CUT${liveCutSegments === 1 ? '' : 'S'}`;
+                    ctx.font = '10px "Press Start 2P"';
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'middle';
+                    const padX = 6, padY = 4;
+                    const tw = ctx.measureText(badge).width;
+                    const bx = tip.x + 12, by = tip.y - 14;
+                    ctx.fillStyle = liveCutSegments > cutsLeft
+                        ? 'rgba(180, 30, 30, 0.9)'
+                        : 'rgba(20, 20, 20, 0.85)';
+                    ctx.fillRect(bx - padX, by - 8 - padY, tw + padX*2, 16 + padY*2);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText(badge, bx, by);
+                }
             }
 
-            // Draw successful slash feedback
-            if (slashTimer > 0 && slashLine) {
+            // Draw successful slash feedback (polyline-aware).
+            if (slashTimer > 0 && slashPath && slashPath.length >= 2) {
                 ctx.strokeStyle = `rgba(255, 255, 255, ${slashTimer / 300})`;
                 ctx.lineWidth = 6;
                 ctx.beginPath();
-                
-                // Extend visual line
-                let dx = slashLine.e.x - slashLine.s.x;
-                let dy = slashLine.e.y - slashLine.s.y;
-                ctx.moveTo(slashLine.s.x - dx*2, slashLine.s.y - dy*2);
-                ctx.lineTo(slashLine.e.x + dx*2, slashLine.e.y + dy*2);
+                ctx.moveTo(slashPath[0].x, slashPath[0].y);
+                for (let i = 1; i < slashPath.length; i++) ctx.lineTo(slashPath[i].x, slashPath[i].y);
                 ctx.stroke();
             }
 
@@ -924,6 +2062,90 @@
 
         if (urlParams.get('autoStart') === 'true') {
             initGame(true);
+        }
+
+        // ---- Test-only hotkeys (?test=true) ----
+        // Lets browser-automation tools script cuts on the canvas without
+        // simulating real touch events (the canvas has no a11y role and so
+        // can't be targeted by the MCP browser_drag tool). Gated behind a URL
+        // param so it has zero impact on production play. Cuts are placed
+        // relative to the LARGEST current piece's axis-aligned bounding box.
+        if (urlParams.get('test') === 'true') {
+            function _largestPiece() {
+                let best = null, bestArea = 0;
+                for (const p of pieces) {
+                    const a = getArea(p.pts);
+                    if (a > bestArea) { bestArea = a; best = p; }
+                }
+                return best;
+            }
+            function _bbox(poly) {
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (const v of poly) {
+                    if (v.x < minX) minX = v.x;
+                    if (v.y < minY) minY = v.y;
+                    if (v.x > maxX) maxX = v.x;
+                    if (v.y > maxY) maxY = v.y;
+                }
+                return { minX, minY, maxX, maxY };
+            }
+            // Horizontal straight cut at fraction f (0..1) down the largest
+            // piece's bbox. f=0.5 → bisect, f=0.33 → top third, etc.
+            function _hCut(f) {
+                const p = _largestPiece(); if (!p) return;
+                const b = _bbox(p.pts);
+                const y = b.minY + (b.maxY - b.minY) * f;
+                processSwipe([
+                    { x: b.minX - 5, y },
+                    { x: b.maxX + 5, y }
+                ]);
+            }
+            // Vertical straight cut at fraction f across the largest piece's bbox.
+            function _vCut(f) {
+                const p = _largestPiece(); if (!p) return;
+                const b = _bbox(p.pts);
+                const x = b.minX + (b.maxX - b.minX) * f;
+                processSwipe([
+                    { x, y: b.minY - 5 },
+                    { x, y: b.maxY + 5 }
+                ]);
+            }
+            window.addEventListener('keydown', (e) => {
+                if (gameState !== 'PLAY') return;
+                // Digit keys 1..9 → horizontal cut at f = N/10 of largest piece bbox.
+                if (/^[1-9]$/.test(e.key)) { _hCut(parseInt(e.key) / 10); e.preventDefault(); return; }
+                // Shift+1..9 → vertical cut at f = N/10.
+                if (e.shiftKey && /^[!@#$%^&*(]$/.test(e.key)) {
+                    const map = { '!':1, '@':2, '#':3, '$':4, '%':5, '^':6, '&':7, '*':8, '(':9 };
+                    _vCut(map[e.key] / 10); e.preventDefault(); return;
+                }
+                switch (e.key) {
+                    case 'p': platePresent(); e.preventDefault(); break;
+                    // 'g' (goal) → cut at the area-correct chord position the
+                    // plate is currently displaying for the *current food*.
+                    // Lets us verify the shape-aware plate is mathematically
+                    // self-consistent: if 'g' always passes the level, the
+                    // visualization is honest and a player who copies it
+                    // visually will always succeed.
+                    case 'g': {
+                        const piece = _largestPiece(); if (!piece) break;
+                        const goals = currentLevel ? currentLevel.goals : null;
+                        if (!goals || goals.length < 2) break;
+                        // Compute first-chord position on the *food* polygon
+                        // directly (same algorithm as the plate, just at full
+                        // food scale instead of plate scale).
+                        const total = getArea(piece.pts);
+                        const yChord = _findHorizCutY(piece.pts, goals[0] * total);
+                        const b = _bbox(piece.pts);
+                        processSwipe([
+                            { x: b.minX - 5, y: yChord },
+                            { x: b.maxX + 5, y: yChord }
+                        ]);
+                        e.preventDefault();
+                        break;
+                    }
+                }
+            });
         }
 
     </script>

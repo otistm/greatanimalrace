@@ -13,7 +13,6 @@ interface SpeciesFaceProps {
   species: SpeciesConfig;
   hatCosmetic?: string;
   ageInMonths: number;
-  stamina: number;
   leftEarRef: React.MutableRefObject<THREE.Group | null>;
   rightEarRef: React.MutableRefObject<THREE.Group | null>;
   mouthRef: React.MutableRefObject<THREE.Mesh | null>;
@@ -509,19 +508,15 @@ function Nose({ species }: { species: SpeciesConfig }) {
 function Mouth({
   species,
   ageInMonths,
-  stamina,
   mouthRef,
 }: {
   species: SpeciesConfig;
   ageInMonths: number;
-  stamina: number;
   mouthRef: React.MutableRefObject<THREE.Mesh | null>;
 }) {
   const s = species.snout;
-  // Mouth color follows the nose tint so cow/wolf get a dark mouth,
-  // pig/tiger get a pink mouth, frog gets a dark green mouth, etc.
   const accent = species.nose;
-  const showSmile = ageInMonths >= 1 || stamina < 30;
+  const showSmile = ageInMonths >= 1;
 
   if (s === 'beak' || s === 'pig-disc' || s === 'horse-snout') {
     // Mouth is part of the beak / disc snout, or omitted entirely on
@@ -929,7 +924,6 @@ export function SpeciesFace({
   species,
   hatCosmetic,
   ageInMonths,
-  stamina,
   leftEarRef,
   rightEarRef,
   mouthRef,
@@ -944,7 +938,7 @@ export function SpeciesFace({
       <FrogFace species={species} />
       <Snout species={species} />
       <Nose species={species} />
-      <Mouth species={species} ageInMonths={ageInMonths} stamina={stamina} mouthRef={mouthRef} />
+      <Mouth species={species} ageInMonths={ageInMonths} mouthRef={mouthRef} />
       <Eyes species={species} leftEyeRef={leftEyeRef} rightEyeRef={rightEyeRef} />
       <Ears species={species} hatCosmetic={hatCosmetic} leftEarRef={leftEarRef} rightEarRef={rightEarRef} />
       <Horns species={species} />

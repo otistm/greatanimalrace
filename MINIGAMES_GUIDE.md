@@ -2,7 +2,7 @@
 
 This document outlines the **design rules** (level structure, goals, star thresholds) for all 6 minigames in Playto GAR.
 
-> For everything else — the messaging contract between iframes and the parent, XP/coin/stamina rewards, the canonical `score` formula per game, leaderboard storage, and the URL contract — see [`SCORING_GUIDE.md`](./SCORING_GUIDE.md). When the two documents disagree on level structure or star thresholds, **this** document is the spec; when they disagree on the contract or scoring math, **`SCORING_GUIDE.md` is the spec**.
+> For everything else — the messaging contract between iframes and the parent, XP/coin rewards, the canonical `score` formula per game, leaderboard storage, and the URL contract — see [`SCORING_GUIDE.md`](./SCORING_GUIDE.md). When the two documents disagree on level structure or star thresholds, **this** document is the spec; when they disagree on the contract or scoring math, **`SCORING_GUIDE.md` is the spec**.
 
 ## Global Progression System
 All minigames are standardized to a **5-Level System**.
@@ -31,7 +31,7 @@ All minigames are standardized to a **5-Level System**.
 ---
 
 ## 2. Hide & Sneak
-**Goal:** Sneak around a dark nursery and complete quests (e.g. pat the baby, retrieve a bottle) without waking the baby as fast as possible.
+**Goal:** Sneak around a dark nursery and complete quests (e.g. pat the baby, retrieve a bottle) without waking the baby as fast as possible. After all quests are done, return to the door to exit the room.
 
 **Levels:**
 - **Level 1:** Complete 1 quest.

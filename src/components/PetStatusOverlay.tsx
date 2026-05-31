@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { X, Lock, Unlock, Star, Trophy, LogOut, CheckCircle, Edit2, Check, Package } from 'lucide-react';
+import { X, Lock, Unlock, Star, Trophy, LogOut, CheckCircle, Edit2, Check, Package, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserHighScores } from '../hooks/useUserHighScores';
 import { useGlobalRank } from '../hooks/useGlobalRank';
+import { useUnreadCounts } from '../hooks/useChat';
+import { GAMES } from '../games/registry';
 
 interface GameProgress {
   unlockedLevel: number;
@@ -14,28 +16,19 @@ interface Props {
   ageInMonths: number;
   currentXp: number;
   requiredXp: number;
-  stamina: number;
   onClose: () => void;
   animalName: string;
   onNameChange: (newName: string) => void;
   onResetGame: () => void;
   onOpenLeaderboard: () => void;
+  onOpenMessages: () => void;
   onSelectGame: (gameId: string) => void;
   gameProgress?: Record<string, GameProgress>;
   chestsOpened?: number;
   chestsTotal?: number;
 }
 
-const GAMES = [
-  { id: 'toy_bin_bonanza', name: 'Toy Bin Bonanza', unlockMonth: 0 },
-  { id: 'swaddle_gami', name: 'Swaddle-gami', unlockMonth: 2 },
-  { id: 'naptime_runner', name: 'Naptime Runner', unlockMonth: 3 },
-  { id: 'hide_and_seek', name: 'Hide & Sneak', unlockMonth: 5 },
-  { id: 'tiny_chef', name: 'Tiny Chef', unlockMonth: 7 },
-  { id: 'bottle_rama', name: 'Bottle-Rama', unlockMonth: 9 },
-];
-
-export function PetStatusOverlay({ ageInMonths, currentXp, requiredXp, stamina, onClose, animalName, onNameChange, onResetGame, onOpenLeaderboard, onSelectGame, gameProgress = {}, chestsOpened = 0, chestsTotal = 0 }: Props) {
+export function PetStatusOverlay({ ageInMonths, currentXp, requiredXp, onClose, animalName, onNameChange, onResetGame, onOpenLeaderboard, onOpenMessages, onSelectGame, gameProgress = {}, chestsOpened = 0, chestsTotal = 0 }: Props) {
   const progressPercent = Math.min(100, (currentXp / requiredXp) * 100);
   const { user } = useAuth();
   const [isEditingName, setIsEditingName] = useState(false);
@@ -45,6 +38,7 @@ export function PetStatusOverlay({ ageInMonths, currentXp, requiredXp, stamina, 
   const unlockedGameIds = GAMES.filter(g => ageInMonths >= g.unlockMonth).map(g => g.id);
   const highScores = useUserHighScores(unlockedGameIds);
   const { rank, loading: rankLoading } = useGlobalRank(ageInMonths);
+  const unread = useUnreadCounts();
 
   const handleSaveName = () => {
     if (editNameValue.trim() !== '') {
@@ -122,7 +116,7 @@ export function PetStatusOverlay({ ageInMonths, currentXp, requiredXp, stamina, 
           </div>
 
           <div className="overflow-y-auto min-h-0 custom-scrollbar flex-1 pr-1 sm:pr-2">
-            <div className="mb-4 sm:mb-6 md:mb-8 shrink-0">
+            <div className="mb-4 sm:mb-6 md:mb-8 shrink-0 flex flex-col gap-2">
               <button 
                 onClick={onOpenLeaderboard}
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white font-bold text-sm sm:text-base transition-all hover:shadow-md flex items-center justify-center gap-2 shadow-sm"
@@ -131,22 +125,21 @@ export function PetStatusOverlay({ ageInMonths, currentXp, requiredXp, stamina, 
                 View Global Leaderboard 
                 {rankLoading ? <span className="opacity-75 font-medium ml-1">...</span> : rank ? <span className="opacity-90 font-medium ml-1">(Rank #{rank})</span> : ''}
               </button>
-            </div>
-
-            <div className="mb-4 sm:mb-6 md:mb-8 shrink-0">
-              <div className="bg-green-50 rounded-xl sm:rounded-2xl p-2 sm:p-3 md:p-4 border-2 border-green-100">
-                <div className="flex justify-between items-center mb-1 sm:mb-2">
-                  <span className="text-[10px] sm:text-xs md:text-sm font-bold text-green-600 uppercase tracking-wider">Stamina</span>
-                  <span className="text-[10px] sm:text-xs md:text-sm font-black text-green-500">{Math.round(stamina)}%</span>
-                </div>
-                <div className="h-2 sm:h-3 bg-green-200 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${stamina}%` }}
-                    className="h-full bg-green-500 rounded-full"
-                  />
-                </div>
-              </div>
+              <button
+                onClick={onOpenMessages}
+                className="relative w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-400 to-blue-500 hover:from-sky-500 hover:to-blue-600 text-white font-bold text-sm sm:text-base transition-all hover:shadow-md flex items-center justify-center gap-2 shadow-sm"
+              >
+                <MessageCircle className="w-5 h-5 text-sky-100" />
+                Messages
+                {(unread.world > 0 || Object.keys(unread.dms).length > 0) && (
+                  <span className="ml-1 min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-black flex items-center justify-center shadow-sm border border-white/40">
+                    {(() => {
+                      const n = unread.world + Object.keys(unread.dms).length;
+                      return n > 9 ? '9+' : n;
+                    })()}
+                  </span>
+                )}
+              </button>
             </div>
 
             {chestsTotal > 0 && (

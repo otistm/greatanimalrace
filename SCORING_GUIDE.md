@@ -137,35 +137,21 @@ Implications for difficulty bands:
 - A player who **3-stars** every level: `60 × 850 × 1.5 + 2,400 ≈ 78,900 XP`, well past age 12 — comfortably into age 13–14.
 - Early-game pacing is fast by design: a single 2-star clear of any L1 yields ~1,950 XP (`850×2 + 200 first-play + 50 new-HS`), more than enough to hit age 2 (need 1,350 XP) and unlock Swaddle-gami immediately.
 
-### 4.2 Stamina recovery from minigames
-
-Granted by the parent on every `LEVEL_RESULT` (regardless of stars):
-
-| Game | Stamina restored |
-|------|------------------|
-| Toy Bin Bonanza | +20 |
-| Naptime Runner | +50 |
-| Hide & Sneak | +15 |
-| Swaddle-gami | +15 |
-| Tiny Chef | +15 |
-| Bottle-Rama | +15 |
-
-### 4.3 Coins
+### 4.2 Coins
 
 Minigames do not grant coins directly. Coins are earned only from world coin pickups (`+1` coin and `+10` XP per coin in `App.tsx#handleCoinCollide`).
 
-### 4.4 Other XP sources (world)
+### 4.3 Other XP sources (world)
 
 | Action | XP |
 |--------|----|
-| Walk to a non-carrot target | +10 |
+| Walk continuously | +1 every 5 seconds while moving |
 | Open a treasure chest | +30 |
 | Talk to your pet | +5 |
 | Tap to sleep | +5 |
 | Coin pickup | +10 |
-| Idle joystick movement | up to +1 every ~5s (random) |
 
-### 4.5 Pet leveling
+### 4.4 Pet leveling
 
 `requiredXp(age) = 500 + age*300 + age*age*50`. Excess XP rolls over into the next age band.
 

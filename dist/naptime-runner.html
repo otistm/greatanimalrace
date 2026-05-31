@@ -70,6 +70,18 @@
             animation: pulse-red 0.5s infinite alternate;
         }
 
+        /* Drop shadow for HUD text so it stays legible on the bright daytime sky. */
+        .hud-shadow {
+            text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+        }
+
+        .star { color: #555; font-size: 26px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
+        @keyframes pop {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.4); }
+        }
+
         @keyframes pulse-red {
             from { transform: scale(1); }
             to { transform: scale(1.1); }
@@ -92,11 +104,12 @@
         <div id="touch-surface"></div>
 
         <!-- HUD -->
-        <div id="hud" class="absolute top-0 left-0 w-full p-4 flex flex-col gap-2 z-10 text-white text-[10px] sm:text-xs tracking-wider pointer-events-none">
+        <div id="hud" class="absolute top-0 left-0 w-full p-4 flex flex-col gap-2 z-10 text-white text-[10px] sm:text-xs tracking-wider pointer-events-none hud-shadow">
+            <button id="hud-exit-btn" class="absolute top-2 left-2 bg-red-500/80 hover:bg-red-600 text-white rounded-full w-8 h-8 flex items-center justify-center pointer-events-auto border-2 border-white font-bold z-[30] pb-1">&times;</button>
             <div class="flex justify-between items-start">
-                <div class="flex flex-col gap-2">
+                <div class="flex flex-col gap-2 ml-10">
                     <div>DISTANCE: <span id="score-display" class="text-yellow-400">0</span>m</div>
-                    <div class="text-gray-400">LEVEL: <span id="level-display" class="text-white">1</span></div>
+                    <div>LEVEL: <span id="level-display" class="text-cyan-300">1</span></div>
                 </div>
                 <div class="text-right flex flex-col gap-2">
                     <div id="star-container" class="flex gap-1 justify-end mb-1">
@@ -130,39 +143,27 @@
             </button>
         </div>
 
-        <!-- Level Complete Screen -->
-        <div id="level-complete-screen" class="absolute inset-0 bg-green-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center pointer-events-none">
-            <h1 class="text-4xl text-white mb-4 text-glow">SAFE!</h1>
-            <p class="text-white text-xs mb-4 uppercase">You made it home for naptime!</p>
-            <div id="level-stars-display" class="flex gap-2 mb-6 pointer-events-auto">
+        <!-- Results Screen (shared for win + fail, consistent with the other minigames) -->
+        <div id="game-over-screen" class="absolute inset-0 bg-red-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center">
+            <h1 id="game-over-title" class="text-4xl text-white mb-4 alert-glow">MELTDOWN!</h1>
+            <p id="game-over-reason" class="text-white text-xs mb-6 uppercase tracking-wider">You missed naptime!</p>
+            <div id="final-stars-display" class="flex gap-2 mb-6">
                 <span class="star empty text-5xl drop-shadow-lg">★</span>
                 <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
                 <span class="star empty text-5xl drop-shadow-lg">★</span>
             </div>
-            <p class="text-white text-lg mb-8 font-bold pointer-events-auto">SCORE: <span id="level-final-score" class="text-yellow-300">0</span></p>
-            <button id="next-level-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] pointer-events-auto active:shadow-none active:translate-y-1 transition-all">
-                Next Day (Harder)
-            </button>
-        </div>
-
-        <!-- Game Over Screen -->
-        <div id="game-over-screen" class="absolute inset-0 bg-red-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center pointer-events-none">
-            <div class="absolute top-4 left-4 z-50 pointer-events-auto">
-                <button id="exit-btn" class="bg-gray-800 text-white border-2 border-white px-4 py-2 rounded text-xs uppercase cursor-pointer hover:bg-gray-700 active:translate-y-1 shadow-[2px_2px_0_0_#fff] transition-all">
-                    Exit Game
+            <p class="text-white text-sm mb-6 font-bold">SCORE: <span id="final-score" class="text-yellow-300">0</span></p>
+            <div class="flex flex-col gap-4 w-full max-w-[220px] mx-auto">
+                <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
+                    Play Again
+                </button>
+                <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
+                    Next Level
+                </button>
+                <button id="exit-btn" class="bg-transparent text-gray-300 hover:text-white border-2 border-gray-400 hover:border-white px-4 py-2 rounded text-xs uppercase cursor-pointer transition-colors">
+                    Save &amp; Exit
                 </button>
             </div>
-            <h1 class="text-4xl text-white mb-4 alert-glow">MELTDOWN!</h1>
-            <p class="text-white text-xs mb-4 uppercase">You missed naptime!</p>
-            <div id="gameover-stars-display" class="flex gap-2 mb-6 pointer-events-auto">
-                <span class="star empty text-5xl drop-shadow-lg">★</span>
-                <span class="star empty text-5xl drop-shadow-lg transform -translate-y-2">★</span>
-                <span class="star empty text-5xl drop-shadow-lg">★</span>
-            </div>
-            <p class="text-white text-lg mb-8 font-bold pointer-events-auto">SCORE: <span id="final-score" class="text-yellow-300">0</span></p>
-            <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] pointer-events-auto active:shadow-none active:translate-y-1 transition-all">
-                Try Again
-            </button>
         </div>
 
     </div>
@@ -189,24 +190,34 @@
         
         const startScreen = document.getElementById('start-screen');
         const gameOverScreen = document.getElementById('game-over-screen');
-        const levelCompleteScreen = document.getElementById('level-complete-screen');
+        const gameOverTitleEl = document.getElementById('game-over-title');
+        const gameOverReasonEl = document.getElementById('game-over-reason');
+        const finalStarsContainerEl = document.getElementById('final-stars-display');
         const finalScoreEl = document.getElementById('final-score');
+        const nextLevelBtn = document.getElementById('next-level-btn');
+        const restartBtn = document.getElementById('restart-btn');
 
         // Game State Variables
         const urlParams = new URLSearchParams(window.location.search);
-        const currentLevelIndex = parseInt(urlParams.get('level')) || 1;
-        
+        const GAME_ID = 'naptime_runner';
+        // Per SCORING_GUIDE.md §6: clamp 1..5; reject 0/negative/non-numeric.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevelIndex = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
+
         let gameState = 'START';
-        let level = currentLevelIndex;
+        const level = currentLevelIndex;
         let targetDistance = 8000 + (level - 1) * 2000;
-        
+
         let distance = 0;
         let timeLeft = 30000; // ms
         let lastTime = 0;
         let baseGameSpeed = 0.35 + (level - 1) * 0.05;
         let gameSpeed = 0.35; // Pixels per ms
-        let totalScore = 0;
-        let earnedStars = 3;
+        let earnedStars = 0;
+        let resultPosted = false;
+
+        // Surface the actual level in the HUD before the first start.
+        levelEl.innerText = level;
         
         let obstacles = [];
         let clocks = [];
@@ -240,7 +251,7 @@
             if (e) e.preventDefault();
             
             if (gameState === 'START') {
-                startGame(true);
+                startGame();
             } else if (gameState === 'PLAY') {
                 if (bunny.isGrounded) {
                     bunny.vy = -bunny.jumpStrength;
@@ -249,7 +260,7 @@
                 }
             } else if (gameState === 'GAMEOVER') {
                 // Prevent immediate restart on death tap
-                if (performance.now() - lastTime > 1000) startGame(true);
+                if (performance.now() - lastTime > 1000) startGame();
             }
         }
 
@@ -262,13 +273,42 @@
             }
         });
 
-        document.getElementById('start-btn').addEventListener('click', (e) => { e.stopPropagation(); startGame(true); });
-        document.getElementById('restart-btn').addEventListener('click', (e) => { e.stopPropagation(); startGame(true); });
-        
+        document.getElementById('start-btn').addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+        document.getElementById('restart-btn').addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+
         document.getElementById('exit-btn').addEventListener('click', (e) => {
             e.stopPropagation();
-            window.parent.postMessage({ type: 'EXIT_GAME', score: totalScore }, '*');
+            // Navigation only — crediting (if any) already happened on LEVEL_RESULT.
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
         });
+
+        document.getElementById('hud-exit-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Mid-round quit: no LEVEL_RESULT credited (player abandoned the run).
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
+        });
+
+        nextLevelBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (level >= 5) {
+                window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
+            } else {
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: level }, '*');
+            }
+        });
+
+        function postLevelResult(finalScore, finalStars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
+            window.parent.postMessage({
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: level,
+                stars: finalStars,
+                score: finalScore,
+                outcome
+            }, '*');
+        }
 
         // --- Logic Functions ---
 
@@ -293,123 +333,125 @@
             return startX + w + 10; // 10px gap between properties
         }
 
-        function startGame(resetAll) {
-            if (resetAll) {
-                level = currentLevelIndex;
-                targetDistance = 8000 + (level - 1) * 2000;
-                baseGameSpeed = 0.35 + (level - 1) * 0.05;
-                totalScore = 0;
-            } else {
-                level++;
-                if (level > 5) level = 5;
-                targetDistance = 8000 + (level - 1) * 2000;
-                baseGameSpeed = 0.35 + (level - 1) * 0.05;
-            }
+        function startGame() {
+            // The level is fixed by ?level= per SCORING_GUIDE.md §6; the parent
+            // reloads the iframe with a new ?level= when the player advances.
+            targetDistance = 8000 + (level - 1) * 2000;
+            baseGameSpeed = 0.35 + (level - 1) * 0.05;
 
             distance = 0;
-            timeLeft = 30000 + (level - 1) * 5000; // Give slightly more time per level
+            // Per-level extra time (5s/level) is intentional and documented in SCORING_GUIDE.md.
+            timeLeft = 30000 + (level - 1) * 5000;
             gameSpeed = baseGameSpeed;
-            
-            earnedStars = 3;
-            document.getElementById('star-1').className = 'star earned';
-            document.getElementById('star-2').className = 'star earned';
-            document.getElementById('star-3').className = 'star earned';
-            
+
+            earnedStars = 0;
+            resultPosted = false;
+            document.getElementById('star-1').className = 'star';
+            document.getElementById('star-2').className = 'star';
+            document.getElementById('star-3').className = 'star';
+
             obstacles = [];
             clocks = [];
             particles = [];
             floatTexts = [];
-            
+
             bunny.y = GROUND_Y;
             bunny.vy = 0;
             bunny.isGrounded = true;
             bunny.invincibleTimer = 0;
-            
+
             initScenery();
             spawnTimer = 1000;
-            
+
             gameState = 'PLAY';
             startScreen.classList.add('hidden');
             gameOverScreen.classList.add('hidden');
-            levelCompleteScreen.classList.add('hidden');
-            
+
             levelEl.innerText = level;
-            
+
             lastTime = performance.now();
             requestAnimationFrame(gameLoop);
         }
 
+        // Render the shared results screen. Used by both win and fail so the layout
+        // (stars row, score, Try Again / Next Level / Save & Exit) stays consistent
+        // with every other minigame.
+        function showResultsScreen({ stars, score, isWin }) {
+            if (isWin) {
+                gameOverScreen.classList.remove('bg-red-900/90');
+                gameOverScreen.classList.add('bg-purple-900/90');
+                gameOverTitleEl.innerText = 'SAFE!';
+                gameOverTitleEl.classList.remove('alert-glow');
+                gameOverTitleEl.classList.add('text-glow');
+                gameOverReasonEl.innerText = 'You made it home for naptime!';
+                if (level >= 5) {
+                    nextLevelBtn.innerText = 'Finish';
+                } else {
+                    nextLevelBtn.innerText = 'Next Level';
+                }
+                nextLevelBtn.classList.remove('hidden');
+            } else {
+                gameOverScreen.classList.remove('bg-purple-900/90');
+                gameOverScreen.classList.add('bg-red-900/90');
+                gameOverTitleEl.innerText = 'MELTDOWN!';
+                gameOverTitleEl.classList.remove('text-glow');
+                gameOverTitleEl.classList.add('alert-glow');
+                gameOverReasonEl.innerText = 'You missed naptime!';
+                nextLevelBtn.classList.add('hidden');
+            }
+
+            // Win → "Play Again" (replay for a higher star count); fail → "Try Again".
+            restartBtn.innerText = isWin ? 'Play Again' : 'Try Again';
+
+            finalScoreEl.innerText = score;
+
+            const finalStarSpans = finalStarsContainerEl.querySelectorAll('.star');
+            finalStarSpans.forEach((star, index) => {
+                if (index < stars) {
+                    star.classList.add('earned');
+                    star.classList.remove('empty');
+                } else {
+                    star.classList.remove('earned');
+                    star.classList.add('empty');
+                }
+            });
+
+            gameOverScreen.classList.remove('hidden');
+        }
+
         function levelComplete() {
             gameState = 'LEVEL_COMPLETE';
-            totalScore += Math.floor(distance / 10);
-            
-            const finalScoreEl = document.getElementById('level-final-score');
-            if (finalScoreEl) finalScoreEl.innerText = totalScore;
-            
-            const finalStarsContainer = document.getElementById('level-stars-display');
-            if (finalStarsContainer) {
-                const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
-                finalStarSpans.forEach((star, index) => {
-                    if (index < earnedStars) {
-                        star.classList.add('earned');
-                        star.classList.remove('empty');
-                    } else {
-                        star.classList.remove('earned');
-                        star.classList.add('empty');
-                    }
-                });
-            }
-            
-            const nextLevelBtn = document.getElementById('next-level-btn');
-            if (level >= 5) {
-                nextLevelBtn.innerText = "FINISH";
-                nextLevelBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    window.parent.postMessage({ type: 'EXIT_GAME', score: totalScore }, '*');
-                };
-            } else {
-                nextLevelBtn.innerText = "Next Day (Harder)";
-                nextLevelBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    window.parent.postMessage({ type: 'NEXT_LEVEL', score: totalScore, stars: earnedStars, level: level }, '*');
-                };
-            }
-            
-            levelCompleteScreen.classList.remove('hidden');
+
+            // Canonical score per SCORING_GUIDE.md §3 = floor(distance/10) for THIS run only.
+            const runScore = Math.floor(distance / 10);
+
+            // Recompute final stars from final timeLeft with strict > thresholds (§2).
+            let finalStars = 1;
+            if (timeLeft > 10000) finalStars = 2;
+            if (timeLeft > 20000) finalStars = 3;
+            earnedStars = finalStars;
+
+            showResultsScreen({ stars: finalStars, score: runScore, isWin: true });
             lastTime = performance.now();
-            window.parent.postMessage({ type: 'GAME_OVER', score: totalScore, stars: earnedStars }, '*');
+            postLevelResult(runScore, finalStars, 'win');
         }
 
         function gameOver() {
             gameState = 'GAMEOVER';
-            
-            let finalDist = Math.floor(distance / 10);
-            totalScore += finalDist;
-            finalScoreEl.innerText = totalScore;
-            
-            const finalStarsContainer = document.getElementById('gameover-stars-display');
-            if (finalStarsContainer) {
-                const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
-                finalStarSpans.forEach((star, index) => {
-                    if (index < 0) { // 0 stars on game over
-                        star.classList.add('earned');
-                        star.classList.remove('empty');
-                    } else {
-                        star.classList.remove('earned');
-                        star.classList.add('empty');
-                    }
-                });
-            }
-            
+
+            // Per SCORING_GUIDE.md §3, score is per-run distance/10. A failed run
+            // still surfaces the partial distance so the player sees their progress.
+            const runScore = Math.floor(distance / 10);
+
             // Camera shake
             document.getElementById('game-container').style.transform = 'translate(10px, 10px)';
             setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(-10px, -10px)'; }, 50);
             setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(0, 0)'; }, 100);
 
-            gameOverScreen.classList.remove('hidden');
-            lastTime = performance.now(); // Used for restart delay
-            
-            window.parent.postMessage({ type: 'GAME_OVER', score: totalScore, stars: 0 }, '*');
+            showResultsScreen({ stars: 0, score: runScore, isWin: false });
+            lastTime = performance.now();
+
+            postLevelResult(runScore, 0, 'fail');
         }
 
         function spawnEntity() {
@@ -473,12 +515,14 @@
             timeLeft -= dt;
             distance += gameSpeed * dt;
 
-            let currentStars = 1;
-            if (timeLeft >= 10000) currentStars = 2; // > 10s left
-            if (timeLeft >= 20000) currentStars = 3; // > 20s left
-            if (currentStars !== earnedStars) {
-                earnedStars = currentStars;
-                document.getElementById('star-1').className = 'star earned';
+            // Live HUD preview only — final stars are recomputed in levelComplete()
+            // when the round finishes. Strict > thresholds per SCORING_GUIDE.md §2.
+            let previewStars = 1;
+            if (timeLeft > 10000) previewStars = 2;
+            if (timeLeft > 20000) previewStars = 3;
+            if (previewStars !== earnedStars) {
+                earnedStars = previewStars;
+                document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
                 document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
                 document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
             }
@@ -757,23 +801,50 @@
             const w = bunny.width;
             const h = bunny.height;
 
-            // Bunny Body (Drawn from bottom up)
-            ctx.fillStyle = '#FF99CC'; 
-            ctx.fillRect(x, y - h*0.6, w, h*0.6); // Body
-            
-            // Ears - tilt back when jumping
-            let earOffset = bunny.isGrounded ? 0 : 5;
-            ctx.fillRect(x + w*0.1, y - h + earOffset, w*0.2, h*0.4); 
-            ctx.fillRect(x + w*0.6, y - h + earOffset, w*0.2, h*0.4); 
-            
-            // Eyes (Looking right)
-            ctx.fillStyle = '#FF0055';
-            ctx.fillRect(x + w*0.5, y - h*0.5, w*0.15, w*0.15); 
-            ctx.fillRect(x + w*0.8, y - h*0.5, w*0.15, w*0.15);
-            
-            // Nose
-            ctx.fillStyle = '#CC3366';
-            ctx.fillRect(x + w*0.9, y - h*0.3, w*0.1, w*0.1); 
+            // Layer 1: cotton-ball tail behind the body, on the left
+            // (opposite of the running direction).
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(x + w*0.04, y - h*0.32, w*0.13, 0, Math.PI*2); ctx.fill();
+
+            // Layer 2: soft pink ellipse body (matches the round head).
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.5, y - h*0.3, w*0.42, h*0.28, 0, 0, Math.PI*2); ctx.fill();
+
+            // Layer 3: feet — running animation. Grounded: alternate phase
+            // off travel distance. Airborne: tucked.
+            const phase = bunny.isGrounded ? Math.sin(distance * 0.18) * 3 : -2;
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.3, y - phase, w*0.15, h*0.06, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.65, y + phase, w*0.15, h*0.06, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#ffd2e2';
+            ctx.beginPath(); ctx.ellipse(x + w*0.3, y - phase, w*0.06, h*0.025, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.65, y + phase, w*0.06, h*0.025, 0, 0, Math.PI*2); ctx.fill();
+
+            // --- Layer 4: circle-mascot head (matches swaddle-gami / bottle-rama) ---
+            const headCx = x + w*0.5;
+            const headCy = y - h*0.62;
+            const headR  = w*0.45;
+
+            // Ears - ellipses tilt back while airborne.
+            let earOffset = bunny.isGrounded ? 0 : 4;
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(headCx - headR*0.55, headCy - headR*1.1 + earOffset, headR*0.32, headR*0.9, -0.25, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(headCx + headR*0.55, headCy - headR*1.1 + earOffset, headR*0.32, headR*0.9,  0.25, 0, Math.PI*2); ctx.fill();
+
+            // Head circle.
+            ctx.beginPath(); ctx.arc(headCx, headCy, headR, 0, Math.PI*2); ctx.fill();
+
+            // Eyes - both shifted right (running direction).
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx - headR*0.18, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(headCx + headR*0.45, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+
+            // White snout (muzzle) with the nose at its top — biased right
+            // so the bunny reads as "facing forward".
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.ellipse(headCx + headR*0.4, headCy + headR*0.42, headR*0.32, headR*0.22, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx + headR*0.5, headCy + headR*0.28, headR*0.13, 0, Math.PI*2); ctx.fill();
 
             // Stroller
             const sx = x + w - 5;
@@ -976,7 +1047,7 @@
         drawCityscape();
 
         if (urlParams.get('autoStart') === 'true') {
-            startGame(true);
+            startGame();
         }
 
     </script>

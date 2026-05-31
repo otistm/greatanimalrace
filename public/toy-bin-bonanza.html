@@ -144,7 +144,7 @@
         <!-- Start Screen -->
         <div id="start-screen" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 p-4 text-center">
             <h1 class="text-3xl sm:text-4xl text-white mb-8 text-glow leading-loose">TOY BIN<br>BONANZA</h1>
-            <p class="text-gray-300 text-xs mb-8 leading-loose uppercase">Move Left & Right<br>Catch the toys<br>Don't drop them!</p>
+            <p class="text-gray-300 text-xs mb-8 leading-loose uppercase">Move Left & Right.<br>Catch as Many Toys as you can before Time Runs out!</p>
             <div class="flex flex-col gap-4">
                 <button id="start-btn" class="bg-blue-500 hover:bg-blue-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase animate-pulse cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
                     Insert Coin
@@ -237,16 +237,11 @@
         
         // Safely load high score (best caught/round, per canonical score formula).
         let highScore = 0;
-        try {
-            highScore = parseInt(localStorage.getItem('toyBinHighScore_' + currentLevelIndex)) || 0;
-        } catch (e) {
-            console.warn("Local storage unavailable.");
-        }
         highScoreEl.innerText = highScore;
         
         let lastTime = 0;
-        let spawnTimer = 0;
-        let spawnInterval = 1500;
+        let roundElapsed = 0;
+        const SPAWN_END_BUFFER_MS = 2000;
         let toys = [];
         let particles = [];
         let shakeTimer = 0;
@@ -483,6 +478,44 @@
         let lastHudTime = -1;
         let lastHudScore = -1;
 
+        function spawnNextToy() {
+            if (toysSpawned >= config.targetToys) return;
+            toysSpawned++;
+            const toyWidth = 24;
+            const toyHeight = 24;
+            const baseSpeed = 0.15 + (currentLevelIndex * 0.05);
+            const speedMod = baseSpeed + (toysSpawned / config.targetToys) * 0.1;
+            toys.push({
+                x: Math.random() * (GAME_WIDTH - toyWidth),
+                y: -toyHeight,
+                width: toyWidth,
+                height: toyHeight,
+                type: Math.floor(Math.random() * 5),
+                speed: speedMod
+            });
+        }
+
+        function getSpawnTimeForIndex(index) {
+            // Evenly space spawns; finish ~2s before the round ends so the last toy can fall.
+            if (config.targetToys <= 1) return 0;
+            const spawnWindow = Math.max(500, config.timeLimit - SPAWN_END_BUFFER_MS);
+            return (index * spawnWindow) / (config.targetToys - 1);
+        }
+
+        function spawnDueToys() {
+            while (toysSpawned < config.targetToys && roundElapsed >= getSpawnTimeForIndex(toysSpawned)) {
+                spawnNextToy();
+            }
+        }
+
+        function starDenominator() {
+            // SCORING_GUIDE §2: stars are % of spawned toys; during play use target as goal.
+            if (gameState === 'GAMEOVER' || toysSpawned >= config.targetToys) {
+                return Math.max(toysSpawned, 1);
+            }
+            return config.targetToys;
+        }
+
         function updateHUD() {
             if (lastHudScore !== toysCaught) {
                 scoreEl.innerText = toysCaught + "/" + config.targetToys;
@@ -494,9 +527,9 @@
                 timerEl.innerText = timeSec;
                 lastHudTime = timeSec;
             }
-            
-            let catchPercent = toysCaught / config.targetToys;
-            
+
+            const denom = starDenominator();
+            const catchPercent = denom > 0 ? toysCaught / denom : 0;
             let newStars = 0;
             if (catchPercent >= 0.5) newStars = 1;
             if (catchPercent >= 0.8) newStars = 2;
@@ -532,10 +565,8 @@
             lastHudTime = -1;
             lastHudScore = -1;
 
-            // Spawn windows match the doc's "spawned over Ns"; reserve ~2s of post-spawn travel time.
-            const timeForSpawning = Math.max(1000, config.timeLimit - 2000);
-            spawnInterval = timeForSpawning / config.targetToys;
-            spawnTimer = spawnInterval;
+            roundElapsed = 0;
+            spawnDueToys();
             
             rabbit.x = GAME_WIDTH / 2 - rabbit.width / 2;
             movingLeft = false;
@@ -573,9 +604,9 @@
             // Canonical score per SCORING_GUIDE.md §3 = caughtToys.
             const finalScore = toysCaught;
 
-            // Recompute final stars from final catch percentage so timing edge-cases
-            // never disagree with the live HUD value.
-            const catchPercent = config.targetToys > 0 ? toysCaught / config.targetToys : 0;
+            // Recompute final stars from catch % of toys actually spawned (SCORING_GUIDE §2).
+            const denom = Math.max(toysSpawned, 1);
+            const catchPercent = denom > 0 ? toysCaught / denom : 0;
             let finalStars = 0;
             if (catchPercent >= 0.5) finalStars = 1;
             if (catchPercent >= 0.8) finalStars = 2;
@@ -584,12 +615,9 @@
 
             if (finalScore > highScore) {
                 highScore = finalScore;
-                try {
-                    localStorage.setItem('toyBinHighScore_' + currentLevelIndex, String(highScore));
-                } catch (e) {}
             }
 
-            finalScoreEl.innerText = toysCaught + "/" + config.targetToys;
+            finalScoreEl.innerText = toysCaught + "/" + Math.max(toysSpawned, config.targetToys);
             finalHighScoreEl.innerText = highScore;
             highScoreEl.innerText = highScore;
 
@@ -653,7 +681,11 @@
                 shakeTimer -= dt;
             }
 
-            timeLeft -= dt;
+            roundElapsed += dt;
+            timeLeft = config.timeLimit - roundElapsed;
+
+            spawnDueToys();
+
             updateHUD();
             if (timeLeft <= 0) {
                 timeLeft = 0;
@@ -668,28 +700,6 @@
             // Screen boundaries
             if (rabbit.x < 0) rabbit.x = 0;
             if (rabbit.x + rabbit.width > GAME_WIDTH) rabbit.x = GAME_WIDTH - rabbit.width;
-
-            // Spawn Toys
-            spawnTimer -= dt;
-            if (spawnTimer <= 0 && toysSpawned < config.targetToys) {
-                toysSpawned++;
-                const toyWidth = 24;
-                const toyHeight = 24;
-                
-                let baseSpeed = 0.15 + (currentLevelIndex * 0.05);
-                let speedMod = baseSpeed + (toysSpawned / config.targetToys) * 0.1;
-
-                toys.push({
-                    x: Math.random() * (GAME_WIDTH - toyWidth),
-                    y: -toyHeight,
-                    width: toyWidth,
-                    height: toyHeight,
-                    type: Math.floor(Math.random() * 5), // 0: block, 1: ball, 2: bear, 3: book, 4: duck
-                    speed: speedMod
-                });
-                
-                spawnTimer = spawnInterval;
-            }
 
             // Update Toys & Collisions
             for (let i = toys.length - 1; i >= 0; i--) {

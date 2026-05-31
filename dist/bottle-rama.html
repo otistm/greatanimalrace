@@ -22,19 +22,94 @@
             position: relative;
             width: 100vw;
             height: 100vh;
+            height: 100dvh;
             max-width: 600px;
             margin: 0 auto;
-            background: #2c3e50;
+            background: #050505;
             box-shadow: 0 0 30px rgba(50, 200, 150, 0.15);
             overflow: hidden;
             display: flex;
             flex-direction: column;
         }
 
+        /* HUD header bar — sits ABOVE the canvas so nothing overlaps the in-canvas
+           order ticket / bunny chef artwork. */
+        #hud {
+            flex: 0 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            background: #1a1a1a;
+            border-bottom: 4px solid #333;
+            color: #fff;
+            font-size: 10px;
+            letter-spacing: 1px;
+            z-index: 30;
+        }
+        #hud .hud-left,
+        #hud .hud-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        #hud .hud-right { justify-content: flex-end; }
+        #hud .orders { color: #f1c40f; white-space: nowrap; }
+        #hud .hud-stars { display: flex; gap: 4px; }
+        #hud .hud-stars .star { font-size: 26px; line-height: 1; }
+        #timer-display {
+            color: #2ecc71;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+        #timer-display.warning { color: #e74c3c; }
+        #hud-exit-btn {
+            background: #c0392b;
+            color: #fff;
+            width: 26px; height: 26px;
+            border: 2px solid #fff;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            cursor: pointer;
+            box-shadow: 0 2px 0 #7b1f15;
+        }
+        #hud-exit-btn:active { transform: translateY(2px); box-shadow: none; }
+
+        @media (min-width: 400px) {
+            #hud { font-size: 12px; padding: 10px 14px; }
+            #hud .hud-stars .star { font-size: 32px; }
+            #timer-display { font-size: 18px; }
+            #hud-exit-btn { width: 30px; height: 30px; font-size: 12px; }
+        }
+
+        /* Canvas area — flexes to fill remaining space, keeps the canvas a
+           strict 1:1 aspect ratio (matching the internal 400x400 backbuffer)
+           so nothing is stretched on portrait/landscape/odd aspect ratios. */
         #canvas-wrapper {
             position: relative;
-            width: 100%;
-            height: 55%; /* Top half is the game view */
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #050505;
+            overflow: hidden;
+        }
+
+        #canvas-stage {
+            position: relative;
+            aspect-ratio: 1 / 1;
+            width: auto;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            background: #2c3e50;
         }
 
         canvas {
@@ -75,27 +150,33 @@
 
         /* Control Panel */
         #control-panel {
-            flex: 1;
+            flex: 0 0 auto;
             background: #1a1a1a;
             border-top: 4px solid #333;
             padding: 10px;
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 8px;
             z-index: 20;
         }
 
         .main-actions {
             display: flex;
-            gap: 10px;
-            height: 50px;
+            gap: 8px;
+            height: 44px;
         }
 
         .grid-actions {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
-            flex: 1;
+            gap: 6px;
+        }
+        .grid-actions .btn { min-height: 40px; }
+
+        @media (min-height: 700px) {
+            .main-actions { height: 50px; }
+            .grid-actions { gap: 8px; }
+            .grid-actions .btn { min-height: 48px; }
         }
 
         .btn {
@@ -189,28 +270,27 @@
             </div>
         </div>
 
-        <div id="canvas-wrapper">
-            <canvas id="gameCanvas"></canvas>
-            <div class="scanlines"></div>
-
-            <!-- HUD -->
-            <div id="hud" class="absolute top-0 left-0 w-full p-3 flex justify-between items-start z-10 text-white text-[10px] sm:text-xs tracking-wider pointer-events-none">
-                <div class="flex flex-col gap-1">
-                    <div class="text-yellow-400">ORDERS: <span id="score-display">0/2</span></div>
-                    <div id="hud-stars" class="flex gap-1 mt-1">
-                        <span id="star-1" class="star">★</span>
-                        <span id="star-2" class="star">★</span>
-                        <span id="star-3" class="star">★</span>
-                    </div>
-                </div>
-                <div class="text-right flex flex-col gap-1">
-                    <button id="hud-exit-btn" class="bg-red-600 hover:bg-red-500 text-white w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center border-2 border-white shadow-md pointer-events-auto ml-auto transition-transform hover:scale-105 active:scale-95 text-[10px] sm:text-xs">
-                        X
-                    </button>
-                    <div id="timer-display" class="text-green-400 text-lg">60.0s</div>
+        <!-- HUD header bar (above the canvas, never overlaps gameplay art) -->
+        <div id="hud">
+            <div class="hud-left">
+                <div class="orders">ORDERS: <span id="score-display">0/2</span></div>
+                <div id="hud-stars" class="hud-stars">
+                    <span id="star-1" class="star">★</span>
+                    <span id="star-2" class="star">★</span>
+                    <span id="star-3" class="star">★</span>
                 </div>
             </div>
+            <div class="hud-right">
+                <div id="timer-display">60.0s</div>
+                <button id="hud-exit-btn" aria-label="Exit">X</button>
+            </div>
+        </div>
 
+        <div id="canvas-wrapper">
+            <div id="canvas-stage">
+                <canvas id="gameCanvas"></canvas>
+                <div class="scanlines"></div>
+            </div>
         </div>
 
         <!-- Control Panel -->
@@ -239,31 +319,36 @@
     </div>
 
     <script>
-        // Post message helper
-        function exitGame(score = 0) {
-            window.parent.postMessage({
-                type: 'EXIT_GAME',
-                score: score
-            }, '*');
+        const GAME_ID = 'bottle_rama';
+        let resultPosted = false;
+
+        // Navigation-only message helpers (no score/stars). Crediting happens once via LEVEL_RESULT.
+        function exitGame() {
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
         }
 
-        function gameOver(score, stars = 0) {
+        function postLevelResult(finalScore, finalStars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
             window.parent.postMessage({
-                type: 'GAME_OVER',
-                score: score,
-                stars: stars
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: currentLevel,
+                stars: finalStars,
+                score: finalScore,
+                outcome
             }, '*');
         }
 
         // Add exit handlers
-        document.getElementById('hud-exit-btn').addEventListener('click', () => exitGame(score));
-        document.getElementById('start-exit-btn').addEventListener('click', () => exitGame(0));
-        document.getElementById('over-exit-btn').addEventListener('click', () => exitGame(score));
+        document.getElementById('hud-exit-btn').addEventListener('click', exitGame);
+        document.getElementById('start-exit-btn').addEventListener('click', exitGame);
+        document.getElementById('over-exit-btn').addEventListener('click', exitGame);
 
         // --- Setup ---
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        
+
         const GAME_WIDTH = 400;
         const GAME_HEIGHT = 400; // Aspect ratio specifically for top half
         canvas.width = GAME_WIDTH;
@@ -274,11 +359,13 @@
         const timerEl = document.getElementById('timer-display');
         const startScreen = document.getElementById('start-screen');
         const gameOverScreen = document.getElementById('game-over-screen');
-        
+
         // Game State
         const urlParams = new URLSearchParams(window.location.search);
-        const currentLevel = parseInt(urlParams.get('level')) || 1;
-        
+        // Per SCORING_GUIDE.md §6: clamp ?level= to 1..5.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevel = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
+
         const LEVEL_CONFIGS = [
             { targetOrders: 2, timeLimit: 60000 },
             { targetOrders: 3, timeLimit: 60000 },
@@ -286,14 +373,14 @@
             { targetOrders: 5, timeLimit: 50000 },
             { targetOrders: 6, timeLimit: 50000 }
         ];
-        
+
         let gameState = 'START';
-        let score = 0;
-        let targetOrders = LEVEL_CONFIGS[0].targetOrders;
-        let timeLimit = LEVEL_CONFIGS[0].timeLimit;
+        let score = 0; // = orders served (canonical score per SCORING_GUIDE.md §3)
+        let targetOrders = LEVEL_CONFIGS[currentLevel - 1].targetOrders;
+        let timeLimit = LEVEL_CONFIGS[currentLevel - 1].timeLimit;
         let timeLeft = timeLimit;
         let lastTime = 0;
-        let earnedStars = 3;
+        let earnedStars = 0;
         
         let currentItem = null; // What the bunny is holding
         let currentOrder = null; // What we need to make
@@ -306,18 +393,96 @@
         
         // --- Entities & Logic ---
         
+        // Recipes are tagged with a `difficulty` (1–5) so each level draws from
+        // a tier-appropriate pool. Higher difficulties unlock more axes of
+        // variation: temperature, mixing, larger sizes, exotic combos.
+        //   - difficulty 1: room temp water, no mixing required
+        //   - difficulty 2: introduces formula + mixing (shake/stir)
+        //   - difficulty 3: introduces non-room temperatures (warm/cold)
+        //   - difficulty 4: introduces hot temperatures and full bottles
+        //   - difficulty 5: max-complexity orders requiring every step
         const RECIPES = [
-            { name: "WARM FORMULA", type: 'bottle', water: 2, formula: 2, temp: 'warm', mixed: 'shaken', lid: 'nipple' },
-            { name: "COLD WATER", type: 'cup', water: 3, formula: 0, temp: 'cold', mixed: 'none', lid: 'straw' },
-            { name: "HOT MILK", type: 'cup', water: 2, formula: 1, temp: 'hot', mixed: 'stirred', lid: 'straw' },
-            { name: "ROOM FORMULA", type: 'bottle', water: 3, formula: 3, temp: 'room', mixed: 'shaken', lid: 'nipple' },
-            { name: "HOT WATER", type: 'bottle', water: 2, formula: 0, temp: 'hot', mixed: 'none', lid: 'nipple' },
-            { name: "COLD MILK", type: 'cup', water: 1, formula: 2, temp: 'cold', mixed: 'stirred', lid: 'straw' }
+            // --- Tier 1: warm-up ----------------------------------------
+            { difficulty: 1, type: 'cup',    water: 1, formula: 0, temp: 'room', mixed: 'none',    lid: 'straw'  },
+            { difficulty: 1, type: 'cup',    water: 2, formula: 0, temp: 'room', mixed: 'none',    lid: 'straw'  },
+            { difficulty: 1, type: 'bottle', water: 2, formula: 0, temp: 'room', mixed: 'none',    lid: 'nipple' },
+            { difficulty: 1, type: 'bottle', water: 3, formula: 0, temp: 'room', mixed: 'none',    lid: 'nipple' },
+            // --- Tier 2: formula + mixing -------------------------------
+            { difficulty: 2, type: 'cup',    water: 1, formula: 1, temp: 'room', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 2, type: 'cup',    water: 2, formula: 1, temp: 'room', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 2, type: 'bottle', water: 2, formula: 1, temp: 'room', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 2, type: 'bottle', water: 3, formula: 1, temp: 'room', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 2, type: 'bottle', water: 2, formula: 2, temp: 'room', mixed: 'shaken',  lid: 'nipple' },
+            // --- Tier 3: temperature -----------------------------------
+            { difficulty: 3, type: 'cup',    water: 3, formula: 0, temp: 'cold', mixed: 'none',    lid: 'straw'  },
+            { difficulty: 3, type: 'cup',    water: 2, formula: 1, temp: 'cold', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 3, type: 'bottle', water: 2, formula: 2, temp: 'warm', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 3, type: 'bottle', water: 1, formula: 2, temp: 'warm', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 3, type: 'cup',    water: 1, formula: 1, temp: 'warm', mixed: 'stirred', lid: 'straw'  },
+            // --- Tier 4: hot & full bottles ----------------------------
+            { difficulty: 4, type: 'cup',    water: 2, formula: 1, temp: 'hot',  mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 4, type: 'bottle', water: 2, formula: 0, temp: 'hot',  mixed: 'none',    lid: 'nipple' },
+            { difficulty: 4, type: 'bottle', water: 3, formula: 2, temp: 'warm', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 4, type: 'cup',    water: 1, formula: 2, temp: 'cold', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 4, type: 'bottle', water: 2, formula: 2, temp: 'hot',  mixed: 'shaken',  lid: 'nipple' },
+            // --- Tier 5: max complexity --------------------------------
+            { difficulty: 5, type: 'bottle', water: 3, formula: 3, temp: 'hot',  mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 5, type: 'cup',    water: 3, formula: 2, temp: 'hot',  mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 5, type: 'bottle', water: 1, formula: 3, temp: 'cold', mixed: 'shaken',  lid: 'nipple' },
+            { difficulty: 5, type: 'cup',    water: 2, formula: 3, temp: 'cold', mixed: 'stirred', lid: 'straw'  },
+            { difficulty: 5, type: 'bottle', water: 3, formula: 2, temp: 'cold', mixed: 'shaken',  lid: 'nipple' }
         ];
 
+        // Each level pulls from a sliding window of difficulties so it feels
+        // distinct but not repetitive. Level 1 only sees tier-1 recipes;
+        // level 5 mostly sees tier-4/5.
+        const LEVEL_RECIPE_TIERS = {
+            1: [1],
+            2: [1, 2],
+            3: [2, 3],
+            4: [3, 4],
+            5: [4, 5]
+        };
+
+        let lastRecipeKey = null;
         function spawnOrder() {
-            const recipe = RECIPES[Math.floor(Math.random() * RECIPES.length)];
-            currentOrder = { ...recipe };
+            const allowedTiers = LEVEL_RECIPE_TIERS[currentLevel] || [1, 2, 3, 4, 5];
+            let pool = RECIPES.filter(r => allowedTiers.includes(r.difficulty));
+            if (pool.length === 0) pool = RECIPES;
+
+            // Avoid repeating the exact same recipe back-to-back when possible.
+            if (pool.length > 1 && lastRecipeKey) {
+                const filtered = pool.filter(r => recipeKey(r) !== lastRecipeKey);
+                if (filtered.length > 0) pool = filtered;
+            }
+
+            const recipe = pool[Math.floor(Math.random() * pool.length)];
+            lastRecipeKey = recipeKey(recipe);
+            currentOrder = { ...recipe, name: (recipe.water + recipe.formula) + " OZ" };
+
+            // Re-shuffle the action grid every order so the player has to read
+            // the buttons rather than memorize positions.
+            shuffleActionGrid();
+        }
+
+        function recipeKey(r) {
+            return [r.type, r.water, r.formula, r.temp, r.mixed, r.lid].join('|');
+        }
+
+        // Fisher–Yates shuffle of the .grid-actions children. The TRASH/SERVE
+        // main-actions row is intentionally left in a fixed location so those
+        // critical actions stay predictable.
+        function shuffleActionGrid() {
+            const grid = document.querySelector('.grid-actions');
+            if (!grid) return;
+            const buttons = Array.from(grid.children);
+            for (let i = buttons.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [buttons[i], buttons[j]] = [buttons[j], buttons[i]];
+            }
+            const frag = document.createDocumentFragment();
+            buttons.forEach(b => frag.appendChild(b));
+            grid.appendChild(frag);
         }
 
         function createParticles(x, y, color, count=5) {
@@ -430,7 +595,7 @@
                         createParticles(cx, cy, '#f1c40f');
                         isCorrectAction = true;
                     } else {
-                        if (currentItem.formula >= currentOrder.formula) feedbackText = "TOO MUCH POWDER!";
+                        if (currentItem.formula >= currentOrder.formula) feedbackText = "TOO MUCH FORMULA!";
                     }
                     break;
 
@@ -524,14 +689,18 @@
             if (score >= targetOrders) {
                 // Level Complete!
                 gameState = 'GAMEOVER';
-                
+
+                // Strict > thresholds per SCORING_GUIDE.md §2.
                 let finalStars = 1;
-                if (timeLeft >= 10000) finalStars = 2;
-                if (timeLeft >= 20000) finalStars = 3;
-                
+                if (timeLeft > 10000) finalStars = 2;
+                if (timeLeft > 20000) finalStars = 3;
+                earnedStars = finalStars;
+
                 document.getElementById('game-over-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
-                document.getElementById('final-score').innerText = "CLEARED!";
-                
+                gameOverScreen.classList.remove('bg-red-900/95');
+                gameOverScreen.classList.add('bg-purple-900/95');
+                document.getElementById('final-score').innerText = score + "/" + targetOrders;
+
                 const finalStarsContainer = document.getElementById('final-stars-display');
                 if (finalStarsContainer) {
                     const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
@@ -545,7 +714,7 @@
                         }
                     });
                 }
-                
+
                 const nextBtn = document.getElementById('next-level-btn');
                 if (nextBtn) {
                     if (currentLevel < 5) {
@@ -554,8 +723,12 @@
                         nextBtn.classList.add('hidden');
                     }
                 }
-                
-                gameOver(score * 10, finalStars);
+
+                // Win → "Play Again" (replay for a higher star count).
+                const restartBtn = document.getElementById('restart-btn');
+                if (restartBtn) restartBtn.innerText = 'Play Again';
+
+                postLevelResult(score, finalStars, 'win');
                 gameOverScreen.classList.remove('hidden');
             } else {
                 spawnFloatText(GAME_WIDTH - 80, GAME_HEIGHT - 100, "YUM!", "#2ecc71");
@@ -568,27 +741,29 @@
         }
 
         function startGame() {
-            const config = LEVEL_CONFIGS[Math.min(currentLevel - 1, 4)];
+            const config = LEVEL_CONFIGS[currentLevel - 1];
             targetOrders = config.targetOrders;
             timeLimit = config.timeLimit;
-            
+
             score = 0;
             timeLeft = timeLimit;
-            earnedStars = 3;
-            document.getElementById('star-1').className = 'star earned';
-            document.getElementById('star-2').className = 'star earned';
-            document.getElementById('star-3').className = 'star earned';
+            earnedStars = 0;
+            resultPosted = false;
+            // HUD inits to 0 stars (no flash) — see SCORING_GUIDE.md §1.4.
+            document.getElementById('star-1').className = 'star';
+            document.getElementById('star-2').className = 'star';
+            document.getElementById('star-3').className = 'star';
             currentItem = null;
             particles = [];
             floatTexts = [];
-            
+
             scoreEl.innerText = score + "/" + targetOrders;
             spawnOrder();
-            
+
             gameState = 'PLAY';
             startScreen.classList.add('hidden');
             gameOverScreen.classList.add('hidden');
-            
+
             lastTime = performance.now();
             requestAnimationFrame(gameLoop);
         }
@@ -598,7 +773,8 @@
         const nextBtn = document.getElementById('next-level-btn');
         if (nextBtn) {
             nextBtn.addEventListener('click', () => {
-                window.parent.postMessage({ type: 'NEXT_LEVEL', score: score * 10, stars: earnedStars, level: currentLevel }, '*');
+                // Navigation only; parent handles the level swap.
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: currentLevel }, '*');
             });
         }
 
@@ -610,15 +786,21 @@
             let displayTime = Math.max(0, timeLeft / 1000).toFixed(1);
             timerEl.innerText = displayTime + "s";
             
-            if (timeLeft <= 10000) timerEl.className = 'text-red-500 text-lg animate-pulse';
-            else timerEl.className = 'text-green-400 text-lg';
+            if (timeLeft <= 10000) timerEl.classList.add('warning');
+            else timerEl.classList.remove('warning');
 
-            let currentStars = 1;
-            if (timeLeft >= 10000) currentStars = 2;
-            if (timeLeft >= 20000) currentStars = 3;
-            
-            if (currentStars !== earnedStars) {
-                earnedStars = currentStars;
+            // Live HUD preview only — final stars are recomputed in serveItem()
+            // when the round completes. Show the maximum tier the player is
+            // currently on track for if they finish right now (with strict > per
+            // SCORING_GUIDE.md §2). Player only "has" 1 star if they actually
+            // make it to targetOrders, so we display 0 until then.
+            let previewStars = 0;
+            if (score >= targetOrders) previewStars = 1;
+            if (score >= targetOrders && timeLeft > 10000) previewStars = 2;
+            if (score >= targetOrders && timeLeft > 20000) previewStars = 3;
+
+            if (previewStars !== earnedStars) {
+                earnedStars = previewStars;
                 document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
                 document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
                 document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
@@ -627,8 +809,10 @@
             if (timeLeft <= 0) {
                 gameState = 'GAMEOVER';
                 document.getElementById('game-over-screen').querySelector('h1').innerText = "TIME'S UP!";
-                document.getElementById('final-score').innerText = "FAILED";
-                
+                gameOverScreen.classList.remove('bg-purple-900/95');
+                gameOverScreen.classList.add('bg-red-900/95');
+                document.getElementById('final-score').innerText = score + "/" + targetOrders;
+
                 const finalStarsContainer = document.getElementById('final-stars-display');
                 if (finalStarsContainer) {
                     const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
@@ -637,13 +821,17 @@
                         star.classList.add('empty');
                     });
                 }
-                
+
                 const nextBtn = document.getElementById('next-level-btn');
                 if (nextBtn) {
                     nextBtn.classList.add('hidden');
                 }
-                
-                gameOver(score * 10, 0);
+
+                // Fail → "Try Again".
+                const restartBtn = document.getElementById('restart-btn');
+                if (restartBtn) restartBtn.innerText = 'Try Again';
+
+                postLevelResult(score, 0, 'fail');
 
                 gameOverScreen.classList.remove('hidden');
             }
@@ -698,10 +886,12 @@
                 ctx.lineWidth = 2;
                 ctx.beginPath(); ctx.moveTo(-4, 12); ctx.lineTo(0, 10); ctx.lineTo(4, 12); ctx.stroke();
 
-                // Nose
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 9, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
                 ctx.fillStyle = '#c0392b';
                 ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
-                
+
                 // Sweat drop
                 ctx.fillStyle = '#8fd3f4';
                 ctx.beginPath(); 
@@ -716,7 +906,9 @@
                 ctx.beginPath(); ctx.moveTo(-12, 0); ctx.quadraticCurveTo(-8, -5, -4, 0); ctx.stroke();
                 ctx.beginPath(); ctx.moveTo(4, 0); ctx.quadraticCurveTo(8, -5, 12, 0); ctx.stroke();
                 
-                // Nose
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 9, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
                 ctx.fillStyle = '#c0392b';
                 ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
 
@@ -733,7 +925,9 @@
                 ctx.beginPath(); ctx.arc(-8, 0, 3, 0, Math.PI*2); ctx.fill();
                 ctx.beginPath(); ctx.arc(8, 0, 3, 0, Math.PI*2); ctx.fill();
                 
-                // Nose
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 11, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
                 ctx.fillStyle = '#c0392b';
                 ctx.beginPath(); ctx.arc(0, 8, 3, 0, Math.PI*2); ctx.fill();
             }
@@ -850,14 +1044,15 @@
             ctx.fillRect(85, 35, 10, 10);
 
             ctx.fillStyle = '#111';
-            ctx.font = '10px "Press Start 2P"';
             ctx.textAlign = 'left';
-            
-            // Name (Wrapped roughly)
-            let words = currentOrder.name.split(' ');
-            ctx.fillText(words[0], 15, 55);
-            if(words[1]) ctx.fillText(words[1], 15, 70);
 
+            // Title is now the total ounces (water + formula). Larger font
+            // makes the order size pop; the rest of the spec lives in the
+            // checklist below.
+            ctx.font = '16px "Press Start 2P"';
+            ctx.fillText(currentOrder.name, 15, 65);
+
+            ctx.font = '10px "Press Start 2P"';
             ctx.fillRect(15, 80, 140, 2); // divider
 
             // Checklist helper function
@@ -881,7 +1076,7 @@
             drawCheck(yPos, currentOrder.type.toUpperCase(), hasItem && c.type === currentOrder.type);
             yPos += 16;
             
-            drawCheck(yPos, "CLEAN&DRY", hasItem && !c.isDirty && !c.isWet);
+            drawCheck(yPos, "WASH & DRY", hasItem && !c.isDirty && !c.isWet);
             yPos += 16;
 
             if (currentOrder.water > 0) {
@@ -890,12 +1085,14 @@
             }
 
             if (currentOrder.formula > 0) {
-                drawCheck(yPos, currentOrder.formula + " POWDER", hasItem && c.formula === currentOrder.formula);
+                drawCheck(yPos, currentOrder.formula + " FORMULA", hasItem && c.formula === currentOrder.formula);
                 yPos += 16;
             }
 
-            drawCheck(yPos, currentOrder.temp.toUpperCase(), hasItem && c.temp === currentOrder.temp);
-            yPos += 16;
+            if (currentOrder.temp !== 'room') {
+                drawCheck(yPos, currentOrder.temp.toUpperCase(), hasItem && c.temp === currentOrder.temp);
+                yPos += 16;
+            }
             
             if (currentOrder.mixed !== 'none') {
                 drawCheck(yPos, currentOrder.mixed.toUpperCase(), hasItem && c.mixed === currentOrder.mixed);

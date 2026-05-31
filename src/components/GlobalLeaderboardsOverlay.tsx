@@ -1,21 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, X, Loader2 } from 'lucide-react';
+import { Trophy, X, Loader2, MessageCircle } from 'lucide-react';
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
+import { getSpeciesConfig } from '../utils/petSpecies';
 
 interface LeaderboardEntry {
   id: string;
   petName: string;
   age: number;
+  animalId: string;
 }
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  onMessageUser?: (uid: string, petName: string, animalId: string) => void;
 }
 
-export function GlobalLeaderboardsOverlay({ isOpen, onClose }: Props) {
+export function GlobalLeaderboardsOverlay({ isOpen, onClose, onMessageUser }: Props) {
+  const { user } = useAuth();
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +44,8 @@ export function GlobalLeaderboardsOverlay({ isOpen, onClose }: Props) {
             return {
               id: doc.id,
               petName: data.petName || 'Anonymous',
-              age: data.progression?.age || 0
+              age: data.progression?.age || 0,
+              animalId: data.selectedAnimalId || 'bunny',
             };
           })
           .filter(entry => entry.age > 0); // Only show pets that have aged
@@ -57,6 +63,8 @@ export function GlobalLeaderboardsOverlay({ isOpen, onClose }: Props) {
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const myUid = user?.uid || '';
 
   return (
     <AnimatePresence>
@@ -110,31 +118,52 @@ export function GlobalLeaderboardsOverlay({ isOpen, onClose }: Props) {
               </div>
             ) : (
               <div className="flex flex-col gap-2 p-4">
-                {entries.map((entry, index) => (
-                  <motion.div
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    key={entry.id}
-                    className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 flex items-center justify-between group hover:shadow-md hover:border-amber-200 transition-all"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg ${
-                        index === 0 ? 'bg-amber-100 text-amber-600' :
-                        index === 1 ? 'bg-zinc-200 text-zinc-600' :
-                        index === 2 ? 'bg-orange-100 text-orange-700' :
-                        'bg-zinc-50 text-zinc-400'
-                      }`}>
-                        #{index + 1}
+                {entries.map((entry, index) => {
+                  const isSelf = entry.id === myUid;
+                  const emoji = getSpeciesConfig(entry.animalId).emoji;
+                  return (
+                    <motion.div
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      key={entry.id}
+                      className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 flex items-center justify-between gap-3 group hover:shadow-md hover:border-amber-200 transition-all"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg ${
+                          index === 0 ? 'bg-amber-100 text-amber-600' :
+                          index === 1 ? 'bg-zinc-200 text-zinc-600' :
+                          index === 2 ? 'bg-orange-100 text-orange-700' :
+                          'bg-zinc-50 text-zinc-400'
+                        }`}>
+                          #{index + 1}
+                        </div>
+                        <span className="text-2xl shrink-0" aria-hidden="true">{emoji}</span>
+                        <span className="font-bold text-zinc-800 text-base sm:text-lg capitalize truncate">
+                          {entry.petName}
+                          {isSelf && <span className="ml-1 text-xs font-semibold text-amber-600">(you)</span>}
+                        </span>
                       </div>
-                      <span className="font-bold text-zinc-800 text-lg capitalize">{entry.petName}</span>
-                    </div>
-                    <div className="bg-zinc-100 px-4 py-1.5 rounded-full border border-zinc-200 group-hover:bg-amber-50 group-hover:border-amber-100 group-hover:text-amber-700 transition-colors">
-                      <span className="font-black">{entry.age}</span>
-                      <span className="text-sm font-bold opacity-70 ml-1">months</span>
-                    </div>
-                  </motion.div>
-                ))}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="bg-zinc-100 px-3 py-1.5 rounded-full border border-zinc-200 group-hover:bg-amber-50 group-hover:border-amber-100 group-hover:text-amber-700 transition-colors">
+                          <span className="font-black">{entry.age}</span>
+                          <span className="text-xs font-bold opacity-70 ml-1">mo</span>
+                        </div>
+                        {!isSelf && onMessageUser && (
+                          <button
+                            type="button"
+                            onClick={() => onMessageUser(entry.id, entry.petName, entry.animalId)}
+                            className="p-2 rounded-full bg-sky-50 hover:bg-sky-500 text-sky-500 hover:text-white border border-sky-100 hover:border-sky-500 transition-all shadow-sm"
+                            aria-label={`Message ${entry.petName}`}
+                            title={`Message ${entry.petName}`}
+                          >
+                            <MessageCircle className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </div>
             )}
           </div>

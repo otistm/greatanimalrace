@@ -10,26 +10,30 @@ export function Unicorn({
   position = [0, 0, 0], 
   targetPosition,
   moveDirRef,
+  movementBasisRef,
   bunnyPositionRef,
   onReachTarget,
   action,
+  jumpNonce = 0,
   onChat,
   ageInMonths = 0,
-  stamina = 100,
   obstacles = [],
-  equippedCosmetics = []
+  equippedCosmetics = [],
+  remote
 }: { 
   position?: [number, number, number], 
   targetPosition?: THREE.Vector3 | null,
   moveDirRef?: React.MutableRefObject<{x: number, z: number} | null>,
+  movementBasisRef?: React.MutableRefObject<{ fx: number; fz: number; rx: number; rz: number } | null>,
   bunnyPositionRef?: React.MutableRefObject<THREE.Vector3>,
   onReachTarget?: () => void,
   action?: string,
+  jumpNonce?: number,
   onChat?: () => void,
   ageInMonths?: number,
-  stamina?: number,
   obstacles?: {position: THREE.Vector3, radius: number}[],
-  equippedCosmetics?: string[]
+  equippedCosmetics?: string[],
+  remote?: { x: number; y: number; z: number; yaw: number; action: string }
 }) {
   const group = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
@@ -121,7 +125,7 @@ export function Unicorn({
         stateRef.current.currentAction = action;
         stateRef.current.actionStartTime = -1;
     }
-  }, [action]);
+  }, [action, jumpNonce]);
 
   useFrame((state, delta) => {
     const t = state.clock.getElapsedTime();
@@ -138,99 +142,101 @@ export function Unicorn({
     if (bodyRef.current) { bodyRef.current.scale.set(1, 1, 1); bodyRef.current.position.set(0, 0.7, 0); }
 
     if (leftEyeRef.current && rightEyeRef.current) {
-        if (stamina < 30) {
-        // Tired eyes (half closed)
-        leftEyeRef.current.scale.set(1, 0.5, 1);
-        rightEyeRef.current.scale.set(1, 0.5, 1);
-        } else {
-        // Normal eyes
         leftEyeRef.current.scale.set(1, 1, 1);
         rightEyeRef.current.scale.set(1, 1, 1);
-        }
     }
 
-    // Force sleep if stamina is 0
-    if (stamina <= 0 && bunnyState.currentAction !== 'sleep') {
-      bunnyState.currentAction = 'sleep';
-    }
-
-    // Movement Logic
-    const moveDir = moveDirRef?.current;
-    if (moveDir && stamina > 0) {
-        bunnyState.isWalking = true;
-        const speed = Math.max(1.0, (stamina / 100) * 4.0);
-        const moveDist = speed * delta;
-        
-        const dir = new THREE.Vector2(moveDir.x, moveDir.z).normalize();
-        let nextX = bunnyState.position.x + dir.x * moveDist;
-        let nextZ = bunnyState.position.z + dir.y * moveDist;
-        
-        // Handle obstacle collision
-        for (const obs of obstacles) {
-            const dx = nextX - obs.position.x;
-            const dz = nextZ - obs.position.z;
-            const dist = Math.sqrt(dx*dx + dz*dz);
-            if (dist < obs.radius) {
-                const fixDir = new THREE.Vector2(dx, dz).normalize();
-                nextX = obs.position.x + fixDir.x * obs.radius;
-                nextZ = obs.position.z + fixDir.y * obs.radius;
-            }
-        }
-
-        // Constrain to terrain bounds (500x500)
-        bunnyState.position.x = Math.max(-240, Math.min(240, nextX));
-        bunnyState.position.z = Math.max(-240, Math.min(240, nextZ));
-        
-        bunnyState.rotation = Math.atan2(dir.x, dir.y);
-        bunnyState.finalTarget = null; // Cancel target movement
-    } else if (bunnyState.finalTarget && stamina > 0) {
-        const currentPos2D = new THREE.Vector2(bunnyState.position.x, bunnyState.position.z);
-        const targetPos2D = new THREE.Vector2(bunnyState.finalTarget.x, bunnyState.finalTarget.z);
-        const dist = currentPos2D.distanceTo(targetPos2D);
-
-        if (dist > 0.05) {
-        bunnyState.isWalking = true;
-        const speed = Math.max(1.0, (stamina / 100) * 4.0);
-        const moveDist = Math.min(speed * delta, dist);
-        const dir = new THREE.Vector2().subVectors(targetPos2D, currentPos2D).normalize();
-        
-        let nextX = bunnyState.position.x + dir.x * moveDist;
-        let nextZ = bunnyState.position.z + dir.y * moveDist;
-        
-        // Handle obstacle collision
-        for (const obs of obstacles) {
-            const dx = nextX - obs.position.x;
-            const dz = nextZ - obs.position.z;
-            const dist = Math.sqrt(dx*dx + dz*dz);
-            if (dist < obs.radius) {
-                const fixDir = new THREE.Vector2(dx, dz).normalize();
-                nextX = obs.position.x + fixDir.x * obs.radius;
-                nextZ = obs.position.z + fixDir.y * obs.radius;
-                
-                // If we get blocked significantly towards target, we might get stuck in an infinite loop.
-                // It's mostly fine for simple avoidance, it will slide along the radius.
-            }
-        }
-
-        // Constrain to terrain bounds (500x500)
-        bunnyState.position.x = Math.max(-240, Math.min(240, nextX));
-        bunnyState.position.z = Math.max(-240, Math.min(240, nextZ));
-        
-        bunnyState.rotation = Math.atan2(dir.x, dir.y);
-        } else {
+    if (remote) {
+        bunnyState.position.set(remote.x, remote.y, remote.z);
+        bunnyState.rotation = remote.yaw;
+        bunnyState.currentAction = remote.action || 'idle';
         bunnyState.isWalking = false;
         bunnyState.finalTarget = null;
-        if (onReachTarget) onReachTarget();
-        }
     } else {
-        bunnyState.isWalking = false;
-    }
-    
-    // Deplete stamina very slightly during active movement (when walking via joystick OR tapping target)
-    if (bunnyState.isWalking && Math.random() < 0.1) {
-        // Handled in parent for joystick, but for tap-to-move we don't easily have updateStamina here.
-        // It's mostly handled now by the joystick movement in App.tsx. 
-        // For tap-to-walk, we added a -1 drop upon reaching target in App.tsx.
+        // Movement Logic
+        const moveDir = moveDirRef?.current;
+        if (moveDir) {
+            bunnyState.isWalking = true;
+            const speed = 4.0;
+            const moveDist = speed * delta;
+
+            let mx = moveDir.x;
+            let mz = moveDir.z;
+            const basis = movementBasisRef?.current;
+            if (basis) {
+              mx = moveDir.x * basis.rx + (-moveDir.z) * basis.fx;
+              mz = moveDir.x * basis.rz + (-moveDir.z) * basis.fz;
+            }
+
+            const dir = new THREE.Vector2(mx, mz);
+            if (dir.lengthSq() < 1e-10) {
+              bunnyState.isWalking = false;
+            } else {
+              dir.normalize();
+              let nextX = bunnyState.position.x + dir.x * moveDist;
+              let nextZ = bunnyState.position.z + dir.y * moveDist;
+            
+              // Handle obstacle collision
+              for (const obs of obstacles) {
+                const dx = nextX - obs.position.x;
+                const dz = nextZ - obs.position.z;
+                const dist = Math.sqrt(dx*dx + dz*dz);
+                if (dist < obs.radius) {
+                  const fixDir = new THREE.Vector2(dx, dz).normalize();
+                  nextX = obs.position.x + fixDir.x * obs.radius;
+                  nextZ = obs.position.z + fixDir.y * obs.radius;
+                }
+              }
+
+              // Constrain to terrain bounds (500x500)
+              bunnyState.position.x = Math.max(-240, Math.min(240, nextX));
+              bunnyState.position.z = Math.max(-240, Math.min(240, nextZ));
+            
+              bunnyState.rotation = Math.atan2(dir.x, dir.y);
+              bunnyState.finalTarget = null; // Cancel target movement
+            }
+        } else if (bunnyState.finalTarget) {
+            const currentPos2D = new THREE.Vector2(bunnyState.position.x, bunnyState.position.z);
+            const targetPos2D = new THREE.Vector2(bunnyState.finalTarget.x, bunnyState.finalTarget.z);
+            const dist = currentPos2D.distanceTo(targetPos2D);
+
+            if (dist > 0.05) {
+            bunnyState.isWalking = true;
+            const speed = 4.0;
+            const moveDist = Math.min(speed * delta, dist);
+            const dir = new THREE.Vector2().subVectors(targetPos2D, currentPos2D).normalize();
+            
+            let nextX = bunnyState.position.x + dir.x * moveDist;
+            let nextZ = bunnyState.position.z + dir.y * moveDist;
+            
+            // Handle obstacle collision
+            for (const obs of obstacles) {
+                const dx = nextX - obs.position.x;
+                const dz = nextZ - obs.position.z;
+                const dist = Math.sqrt(dx*dx + dz*dz);
+                if (dist < obs.radius) {
+                    const fixDir = new THREE.Vector2(dx, dz).normalize();
+                    nextX = obs.position.x + fixDir.x * obs.radius;
+                    nextZ = obs.position.z + fixDir.y * obs.radius;
+                    
+                    // If we get blocked significantly towards target, we might get stuck in an infinite loop.
+                    // It's mostly fine for simple avoidance, it will slide along the radius.
+                }
+            }
+
+            // Constrain to terrain bounds (500x500)
+            bunnyState.position.x = Math.max(-240, Math.min(240, nextX));
+            bunnyState.position.z = Math.max(-240, Math.min(240, nextZ));
+            
+            bunnyState.rotation = Math.atan2(dir.x, dir.y);
+            } else {
+            bunnyState.isWalking = false;
+            bunnyState.finalTarget = null;
+            if (onReachTarget) onReachTarget();
+            }
+        } else {
+            bunnyState.isWalking = false;
+        }
     }
 
     const terrainY = getTerrainHeight(bunnyState.position.x, bunnyState.position.z);
@@ -261,7 +267,7 @@ export function Unicorn({
 
     // Animation Logic
     if (bunnyState.isWalking) {
-        const walkSpeed = Math.max(5, (stamina / 100) * 20);
+        const walkSpeed = 20;
         const walkCycle = t * walkSpeed;
         
         bunnyState.position.y = terrainY + Math.abs(Math.sin(walkCycle)) * 0.15;
@@ -302,7 +308,8 @@ export function Unicorn({
         bunnyState.actionStartTime = t;
         }
         const actionElapsed = t - bunnyState.actionStartTime;
-        const actionDuration = currentAction === 'sing' ? 5.0 : 2.5;
+        const actionDuration =
+          currentAction === 'sing' ? 5.0 : currentAction === 'jump' ? 0.52 : 2.5;
 
         if (currentAction !== 'idle' && currentAction !== 'sleep' && actionElapsed > actionDuration) {
         bunnyState.currentAction = 'idle';
@@ -446,6 +453,37 @@ export function Unicorn({
             }
             break;
             }
+            case 'jump': {
+            const jDur = 0.52;
+            const jt = Math.min(jDur, t - bunnyState.actionStartTime);
+            const u = jt / jDur;
+            const hop = Math.sin(Math.PI * u);
+            const hopH = 0.95;
+            if (group.current) {
+                const headingQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), bunnyState.rotation);
+                group.current.quaternion.slerp(headingQuat, 0.25);
+                group.current.position.y = bunnyState.position.y + hop * hopH;
+            }
+            const squashEl = Math.max(0, 1 - u * 3) * 0.07;
+            if (bodyRef.current) {
+                bodyRef.current.scale.set(1 + squashEl, 1 - squashEl * 0.5, 1 + squashEl);
+            }
+            if (headRef.current) {
+                headRef.current.position.y = 1.4 + hop * 0.1;
+                headRef.current.rotation.x = -hop * 0.35;
+            }
+            if (leftArmRef.current) {
+                leftArmRef.current.rotation.x = -hop * 1.0;
+                leftArmRef.current.rotation.z = 0.15;
+            }
+            if (rightArmRef.current) {
+                rightArmRef.current.rotation.x = -hop * 1.0;
+                rightArmRef.current.rotation.z = -0.15;
+            }
+            if (leftLegRef.current) leftLegRef.current.rotation.x = hop * 0.35;
+            if (rightLegRef.current) rightLegRef.current.rotation.x = hop * 0.35;
+            break;
+            }
             case 'play':
             if (group.current) {
                 const playQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), t * 5);
@@ -482,7 +520,7 @@ export function Unicorn({
     }
 
     if (group.current) {
-        if (!bunnyState.isWalking && ['sleep', 'play', 'sing'].includes(bunnyState.currentAction)) {
+        if (!bunnyState.isWalking && ['sleep', 'play', 'sing', 'jump'].includes(bunnyState.currentAction)) {
         group.current.position.x = bunnyState.position.x;
         group.current.position.z = bunnyState.position.z;
         } else {

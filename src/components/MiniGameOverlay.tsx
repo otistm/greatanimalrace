@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Lock, Play, Carrot, Gamepad2, Trophy } from 'lucide-react';
+import { X, Lock, Carrot, Gamepad2 } from 'lucide-react';
 import { Leaderboard } from './Leaderboard';
+import { GAMES } from '../games/registry';
 
 interface MiniGameOverlayProps {
   isOpen: boolean;
@@ -9,8 +10,17 @@ interface MiniGameOverlayProps {
   onStartGame: (gameId: string, level: number) => void;
   ageInMonths: number;
   initialGameId?: string | null;
-  gameProgress?: Record<string, { unlockedLevel: number, stars: Record<number, number> }>;
+  gameProgress?: Record<string, { unlockedLevel: number; stars: Record<number, number> }>;
 }
+
+const GAME_ICONS: Record<string, React.ReactNode> = {
+  toy_bin_bonanza: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-blue-500" />,
+  swaddle_gami: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-purple-500" />,
+  naptime_runner: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-indigo-500" />,
+  hide_and_seek: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-blue-500" />,
+  tiny_chef: <Carrot className="w-6 h-6 sm:w-8 sm:h-8 text-yellow-500" />,
+  bottle_rama: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-orange-500" />,
+};
 
 export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, initialGameId, gameProgress = {} }: MiniGameOverlayProps) {
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
@@ -25,63 +35,6 @@ export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, ini
       setSelectedGame(initialGameId || null);
     }
   }
-
-  const games = [
-    {
-      id: 'toy_bin_bonanza',
-      name: 'Toy Bin Bonanza',
-      icon: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-blue-500" />,
-      unlockAge: 0,
-      description: "Move Left & Right. Catch the toys. Don't drop them!",
-      xpRule: '+5 XP per toy caught.',
-      color: 'bg-blue-100'
-    },
-    {
-      id: 'swaddle_gami',
-      name: 'Swaddle-gami',
-      icon: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-purple-500" />,
-      unlockAge: 2,
-      description: 'Drag pieces to the dotted outline. Tap pieces to select them. Use FOLD & SPIN to match shapes!',
-      xpRule: '+10 XP per puzzle.',
-      color: 'bg-purple-100'
-    },
-    {
-      id: 'naptime_runner',
-      name: 'Naptime Runner',
-      icon: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-indigo-500" />,
-      unlockAge: 3,
-      description: 'Tap anywhere to JUMP. Grab clocks to add time. Get home before the timer runs out!',
-      xpRule: '+1 XP per 10m distance.',
-      color: 'bg-indigo-100'
-    },
-    {
-      id: 'hide_and_seek',
-      name: 'Hide & Sneak',
-      icon: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-blue-500" />,
-      unlockAge: 5,
-      description: "Tip-toe to complete quests. Don't make too much NOISE. If the baby looks, FREEZE!",
-      xpRule: '+1 XP per 10 points.',
-      color: 'bg-blue-100'
-    },
-    {
-      id: 'tiny_chef',
-      name: 'Tiny Chef',
-      icon: <Carrot className="w-6 h-6 sm:w-8 sm:h-8 text-yellow-500" />,
-      unlockAge: 7,
-      description: "Swipe to cut the food. Match the baby plate fractions! Precision is key. Don't buzz!",
-      xpRule: '+10 XP per perfect dish.',
-      color: 'bg-yellow-100'
-    },
-    {
-      id: 'bottle_rama',
-      name: 'Bottle-Rama',
-      icon: <Gamepad2 className="w-6 h-6 sm:w-8 sm:h-8 text-orange-500" />,
-      unlockAge: 9,
-      description: 'Read the recipe ticket. Wash & Dry containers first! Add ingredients, temp, and mix. Cap it and serve before time runs out!',
-      xpRule: '+10 XP per served meal.',
-      color: 'bg-orange-100'
-    }
-  ];
 
   return (
     <AnimatePresence>
@@ -128,7 +81,8 @@ export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, ini
                       </div>
                       <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-zinc-800 truncate">Mini Games</h2>
                     </div>
-                    <button 
+                    <button
+                      type="button"
                       onClick={() => setDebugMode(!debugMode)}
                       className={`text-[10px] sm:text-xs px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl font-bold transition-colors shrink-0 ml-2 ${debugMode ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
                     >
@@ -138,8 +92,8 @@ export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, ini
 
                   <div className="overflow-y-auto min-h-0 custom-scrollbar flex-1 pr-1 sm:pr-2">
                     <div className="space-y-3 sm:space-y-4 pb-2">
-                      {games.map(game => {
-                        const isLocked = !debugMode && ageInMonths < game.unlockAge;
+                      {GAMES.map(game => {
+                        const isLocked = !debugMode && ageInMonths < game.unlockMonth;
                         return (
                           <button
                             key={game.id}
@@ -151,7 +105,7 @@ export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, ini
                             }`}
                           >
                             <div className={`p-2 sm:p-3 rounded-lg sm:rounded-xl mr-3 sm:mr-4 shrink-0 flex items-center justify-center ${isLocked ? 'bg-gray-200 text-gray-400' : game.color}`}>
-                              {isLocked ? <Lock className="w-6 h-6 sm:w-8 sm:h-8" /> : game.icon}
+                              {isLocked ? <Lock className="w-6 h-6 sm:w-8 sm:h-8" /> : GAME_ICONS[game.id]}
                             </div>
                             <div className="flex-1 min-w-0">
                               <h3 className={`font-bold text-base sm:text-lg md:text-xl truncate ${isLocked ? 'text-gray-500' : 'text-zinc-800'}`}>
@@ -159,7 +113,7 @@ export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, ini
                               </h3>
                               {isLocked && (
                                 <p className="text-xs sm:text-sm text-[#FF6B6B] font-medium truncate">
-                                  Unlocks at {game.unlockAge} months
+                                  Unlocks at {game.unlockMonth} months
                                 </p>
                               )}
                             </div>
@@ -191,7 +145,7 @@ export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, ini
                     <X className="w-6 h-6 sm:w-8 sm:h-8" />
                   </button>
 
-                  {games.filter(g => g.id === selectedGame).map(game => (
+                  {GAMES.filter(g => g.id === selectedGame).map(game => (
                     <div key="rules" className="flex flex-col items-center w-full mt-8 sm:mt-12">
                       <h1 className="text-2xl sm:text-4xl text-white mb-6 leading-loose text-glow text-center break-words w-full px-2">
                         {game.name.toUpperCase()}

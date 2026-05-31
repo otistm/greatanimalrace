@@ -6,13 +6,15 @@
 import React, { useState, useRef, useEffect, Suspense, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Rabbit, Moon, Sun, Gamepad2, Carrot, Battery, Shirt, Coins, Clipboard } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Rabbit, Moon, Sun, Gamepad2, Carrot, Shirt, Coins, MessageCircle, User } from 'lucide-react';
 import * as THREE from 'three';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PinkBunny } from './components/PinkBunny';
 import { Unicorn } from './components/Unicorn';
 import { LowPolyEnvironment } from './components/LowPolyEnvironment';
 import { MiniGameOverlay } from './components/MiniGameOverlay';
+import { MiniGameIframe } from './components/MiniGameIframe';
+import { GAME_IDS } from './games/registry';
 import { TreasureChest } from './components/TreasureChest';
 import { GlobalMessageOverlay, GlobalMessage } from './components/GlobalMessageOverlay';
 import { usePetProgression } from './hooks/usePetProgression';
@@ -21,6 +23,8 @@ import { SlotMachineOverlay } from './components/SlotMachineOverlay';
 import { TunnelTransition } from './components/TunnelTransition';
 import { NamePromptOverlay } from './components/NamePromptOverlay';
 import { GlobalLeaderboardsOverlay } from './components/GlobalLeaderboardsOverlay';
+import { MessagesOverlay, PendingDmTarget } from './components/MessagesOverlay';
+import { useUnreadCounts } from './hooks/useChat';
 import { CosmeticsOverlay } from './components/CosmeticsOverlay';
 import { ArcadeMachine } from './components/ArcadeMachine';
 import { FPSMeter } from './components/FPSMeter';
@@ -29,8 +33,30 @@ import { BASE_COSMETIC_TYPES, COSMETIC_REGISTRY, canonicalizeEquippedString, get
 import { db, auth } from './firebase';
 import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from './utils/firestoreErrorHandler';
-
 import { getTerrainHeight } from './utils/terrain';
+import { useRemotePlayers } from './hooks/useRemotePlayers';
+import { RemotePlayer } from './components/RemotePlayer';
+import { publishPresence, tryClaimSlot, clearPresence } from './utils/multiplayer';
+import { useGamepadWorldInput } from './hooks/useGamepadWorldInput';
+import { TouchCameraControls, type CameraTouchInput } from './components/TouchCameraControls';
+
+const MIN_CAMERA_DIST = 4;
+const MAX_CAMERA_DIST = 45;
+
+function combineMoveDirs(
+  a: { x: number; z: number } | null,
+  b: { x: number; z: number } | null
+): { x: number; z: number } | null {
+  if (!a && !b) return null;
+  if (!a) return b;
+  if (!b) return a;
+  const x = a.x + b.x;
+  const z = a.z + b.z;
+  const m = Math.hypot(x, z);
+  if (m < 1e-5) return null;
+  if (m > 1) return { x: x / m, z: z / m };
+  return { x, z };
+}
 
 export interface ChestData {
   id: number;
@@ -43,6 +69,10 @@ export interface ChestData {
 }
 
 const ARCADE_POS = new THREE.Vector3(8, getTerrainHeight(8, -12), -12);
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+/** Horizontal camera basis for stick movement: forward = into the view, right = stick-right. */
+type MovementBasisXZ = { fx: number; fz: number; rx: number; rz: number };
 
 export const generateInitialChests = (): ChestData[] => {
   const newChests: ChestData[] = [];
@@ -195,8 +225,24 @@ function TargetIndicator({ position }: { position: THREE.Vector3 }) {
   );
 }
 
-function CameraController({ bunnyPositionRef, stage }: { bunnyPositionRef: React.MutableRefObject<THREE.Vector3>, stage: string }) {
+function CameraController({
+  bunnyPositionRef,
+  stage,
+  cameraStickRef,
+  cameraTouchRef,
+  movementBasisRef,
+}: {
+  bunnyPositionRef: React.MutableRefObject<THREE.Vector3>;
+  stage: string;
+  cameraStickRef: React.MutableRefObject<{ x: number; y: number } | null>;
+  cameraTouchRef: React.MutableRefObject<CameraTouchInput | null>;
+  movementBasisRef: React.MutableRefObject<MovementBasisXZ | null>;
+}) {
   const currentTarget = useRef(new THREE.Vector3(0, 1, 0));
+  const offsetScratch = useRef(new THREE.Vector3());
+  const axisScratch = useRef(new THREE.Vector3());
+  const basisForwardScratch = useRef(new THREE.Vector3());
+  const basisRightScratch = useRef(new THREE.Vector3());
 
   useFrame((state, delta) => {
     if (stage === 'animal') {
@@ -208,11 +254,90 @@ function CameraController({ bunnyPositionRef, stage }: { bunnyPositionRef: React
       const previousTarget = currentTarget.current.clone();
       currentTarget.current.lerp(desiredTarget, lerpFactor);
 
+      {
+        const f = basisForwardScratch.current.subVectors(currentTarget.current, state.camera.position);
+        f.y = 0;
+        if (f.lengthSq() < 1e-8) {
+          movementBasisRef.current = null;
+        } else {
+          f.normalize();
+          const r = basisRightScratch.current.crossVectors(f, WORLD_UP);
+          r.normalize();
+          movementBasisRef.current = { fx: f.x, fz: f.z, rx: r.x, rz: r.z };
+        }
+      }
+
       // Calculate how much the target moved this frame
       const diff = new THREE.Vector3().subVectors(currentTarget.current, previousTarget);
 
       // Move the camera by the exact same amount to maintain relative distance/rotation
       state.camera.position.add(diff);
+
+      const stick = cameraStickRef.current;
+      if (stick && (Math.abs(stick.x) > 1e-4 || Math.abs(stick.y) > 1e-4)) {
+        const target = currentTarget.current;
+        const cam = state.camera.position;
+        const offset = offsetScratch.current;
+        offset.copy(cam).sub(target);
+        const dist = offset.length();
+        if (dist > 0.25) {
+          const yawSpeed = 2.35;
+          const pitchSpeed = 1.7;
+          const yawDelta = -stick.x * yawSpeed * delta;
+          const pitchDelta = -stick.y * pitchSpeed * delta;
+
+          offset.applyAxisAngle(WORLD_UP, yawDelta);
+
+          const axis = axisScratch.current;
+          axis.copy(WORLD_UP).cross(offset);
+          if (axis.lengthSq() < 1e-10) {
+            axis.set(1, 0, 0);
+          } else {
+            axis.normalize();
+          }
+          offset.applyAxisAngle(axis, pitchDelta);
+
+          offset.normalize().multiplyScalar(dist);
+
+          cam.copy(target).add(offset);
+          const minCamY = target.y + 0.65;
+          if (cam.y < minCamY) {
+            cam.y = minCamY;
+          }
+        }
+      }
+
+      const touch = cameraTouchRef.current;
+      if (touch && (touch.yaw !== 0 || touch.pitch !== 0 || touch.zoom !== 1)) {
+        const target = currentTarget.current;
+        const cam = state.camera.position;
+        const offset = offsetScratch.current.copy(cam).sub(target);
+        let dist = offset.length();
+
+        if (dist > 0.25 && (touch.yaw !== 0 || touch.pitch !== 0)) {
+          offset.applyAxisAngle(WORLD_UP, touch.yaw);
+          const axis = axisScratch.current.copy(WORLD_UP).cross(offset);
+          if (axis.lengthSq() < 1e-10) {
+            axis.set(1, 0, 0);
+          } else {
+            axis.normalize();
+          }
+          offset.applyAxisAngle(axis, touch.pitch);
+        }
+
+        dist = THREE.MathUtils.clamp(dist * touch.zoom, MIN_CAMERA_DIST, MAX_CAMERA_DIST);
+        if (dist > 0.25) {
+          offset.normalize().multiplyScalar(dist);
+          cam.copy(target).add(offset);
+          const minCamY = target.y + 0.65;
+          if (cam.y < minCamY) {
+            cam.y = minCamY;
+          }
+        }
+
+        cameraTouchRef.current = null;
+      }
+
       state.camera.lookAt(currentTarget.current);
     } else {
       state.camera.lookAt(0, 1, 0);
@@ -391,15 +516,25 @@ export default function App() {
 
   const [targetPosition, setTargetPosition] = useState<THREE.Vector3 | null>(null);
   const moveDirRef = useRef<{x: number, z: number} | null>(null);
+  const joystickDirRef = useRef<{ x: number; z: number } | null>(null);
+  const gamepadDirRef = useRef<{ x: number; z: number } | null>(null);
+  const cameraStickRef = useRef<{ x: number; y: number } | null>(null);
+  const cameraTouchRef = useRef<CameraTouchInput | null>(null);
+  const movementBasisRef = useRef<MovementBasisXZ | null>(null);
+  const bunnyActionRef = useRef<string>('idle');
+  const worldInputEnabledRef = useRef(false);
+  const flushMoveRef = useRef<() => void>(() => {});
+  const gamepadAButtonRef = useRef<(() => void) | null>(null);
+  const gamepadBButtonRef = useRef<(() => void) | null>(null);
   const [bunnyAction, setBunnyAction] = useState<string>('idle');
+  const [jumpNonce, setJumpNonce] = useState(0);
   const [activeCarrotId, setActiveCarrotId] = useState<number | null>(null);
   const [eatenCarrots, setEatenCarrots] = useState<Set<number>>(new Set());
   const collectedCoinsRef = useRef<Set<number>>(new Set());
   const [collectedCoins, setCollectedCoins] = useState<Set<number>>(new Set());
   const bunnyPositionRef = useRef(new THREE.Vector3(0, 0, 0));
   
-  const lastStaminaDrainTime = useRef<number>(Date.now());
-  const lastXpGainTime = useRef<number>(Date.now());
+  const targetPositionRef = useRef<THREE.Vector3 | null>(null);
 
   const [chests, setChests] = useState<ChestData[]>(() => {
     try {
@@ -439,9 +574,16 @@ export default function App() {
     return {};
   });
 
-  const { ageInMonths, currentXp, requiredXp, addXp: originalAddXp, stamina, coins, updateStamina, updateCoins, loadState, resetState } = usePetProgression(true);
+  const { ageInMonths, currentXp, requiredXp, addXp: originalAddXp, coins, updateCoins, loadState, resetState } = usePetProgression();
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const [isLeaderboardsOpen, setIsLeaderboardsOpen] = useState(false);
+  const [isMessagesOpen, setIsMessagesOpen] = useState(false);
+  const [pendingDmTarget, setPendingDmTarget] = useState<PendingDmTarget | null>(null);
+  const unreadChat = useUnreadCounts();
+  const totalUnread = unreadChat.world + Object.keys(unreadChat.dms).length;
+  
+  const remotePlayers = useRemotePlayers(10);
+  const [worldIsFull, setWorldIsFull] = useState(false);
   const [isCosmeticsOpen, setIsCosmeticsOpen] = useState(false);
   const [unlockedCosmetics, setUnlockedCosmetics] = useState<string[]>(() => {
     try {
@@ -543,6 +685,25 @@ export default function App() {
   const [showWelcomeOverlay, setShowWelcomeOverlay] = useState(!localStorage.getItem('hasCompletedWelcome'));
   const [showTransitionVideo, setShowTransitionVideo] = useState(false);
   
+  useEffect(() => {
+    bunnyActionRef.current = bunnyAction;
+  }, [bunnyAction]);
+
+  useEffect(() => {
+    if (bunnyAction !== 'jump') return;
+    const id = window.setTimeout(() => {
+      setBunnyAction((a) => (a === 'jump' ? 'idle' : a));
+    }, 580);
+    return () => clearTimeout(id);
+  }, [bunnyAction]);
+
+  useEffect(() => {
+    worldInputEnabledRef.current =
+      !showWelcomeOverlay &&
+      !showTransitionVideo &&
+      miniGameState !== 'playing';
+  }, [showWelcomeOverlay, showTransitionVideo, miniGameState]);
+
   const { user, signIn } = useAuth();
 
   const handleResetGame = useCallback(async () => {
@@ -561,7 +722,7 @@ export default function App() {
       try {
         await deleteDoc(doc(db, 'users_v3', user.uid));
         
-        const gameIds = ['toy_bin_bonanza', 'hide_and_seek', 'swaddle_gami', 'tiny_chef', 'naptime_runner', 'bottle_rama'];
+        const gameIds = GAME_IDS;
         for (const gId of gameIds) {
           try {
             await deleteDoc(doc(db, 'leaderboards_v3', gId, 'entries', user.uid));
@@ -699,7 +860,6 @@ export default function App() {
           progression: {
             age: ageInMonths,
             xp: currentXp,
-            stamina,
             coins
           }
         }, { merge: true }).catch(error => {
@@ -771,7 +931,7 @@ export default function App() {
   const handleNameChange = useCallback(async (newName: string) => {
     setPetName(newName);
     if (user) {
-      const gameIds = ['toy_bin_bonanza', 'hide_and_seek', 'swaddle_gami', 'tiny_chef', 'naptime_runner', 'bottle_rama'];
+      const gameIds = GAME_IDS;
       for (const gId of gameIds) {
         try {
           const entryRef = doc(db, 'leaderboards_v3', gId, 'entries', user.uid);
@@ -806,26 +966,24 @@ export default function App() {
     }, 2000);
   }, [originalAddXp]);
 
-  // Restore stamina over time while sleeping
+  // Award 1 XP for every 5 seconds of continuous walking (joystick or tap-to-move).
   useEffect(() => {
-    if (bunnyAction === 'sleep') {
-      const interval = setInterval(() => {
-        updateStamina(2); // 2 stamina per second
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [bunnyAction, updateStamina]);
+    targetPositionRef.current = targetPosition;
+  }, [targetPosition]);
 
   useEffect(() => {
-    const STAMINA_PER_GAME: Record<string, number> = {
-      toy_bin_bonanza: 20,
-      naptime_runner: 50,
-      hide_and_seek: 15,
-      swaddle_gami: 15,
-      tiny_chef: 15,
-      bottle_rama: 15,
-    };
+    const interval = setInterval(() => {
+      if (miniGameState === 'playing') return;
+      if (bunnyActionRef.current === 'sleep') return;
+      const isWalking = moveDirRef.current !== null || targetPositionRef.current !== null;
+      if (isWalking) {
+        handleAddXp(1);
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [handleAddXp, miniGameState]);
 
+  useEffect(() => {
     const creditResult = async (
       gameId: string,
       level: number,
@@ -884,9 +1042,6 @@ export default function App() {
           return nextProgress;
         });
       }
-
-      const staminaGain = STAMINA_PER_GAME[gameId];
-      if (staminaGain) updateStamina(staminaGain);
 
       // Leaderboard write + bonus XP. Skip empty (0,0) rows entirely.
       if (user && !(score === 0 && stars === 0)) {
@@ -966,6 +1121,7 @@ export default function App() {
     };
 
     const handleMessage = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
       const msg = event.data;
       if (!msg || typeof msg !== 'object') return;
 
@@ -976,16 +1132,6 @@ export default function App() {
       const level: number = Number(msg.level) || activeGameLevel;
 
       if (msg.type === 'LEVEL_RESULT' && gameId) {
-        const stars = Math.max(0, Math.min(3, Number(msg.stars) || 0));
-        const score = Math.max(0, Math.floor(Number(msg.score) || 0));
-        await creditResult(gameId, level, stars, score);
-        return;
-      }
-
-      // Backward-compat shim: legacy GAME_OVER with stars is treated as a
-      // LEVEL_RESULT. We deliberately do NOT credit on legacy NEXT_LEVEL to
-      // avoid the historical double-credit bug.
-      if (msg.type === 'GAME_OVER' && gameId && msg.stars !== undefined) {
         const stars = Math.max(0, Math.min(3, Number(msg.stars) || 0));
         const score = Math.max(0, Math.floor(Number(msg.score) || 0));
         await creditResult(gameId, level, stars, score);
@@ -1007,7 +1153,7 @@ export default function App() {
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [handleAddXp, activeGameId, activeGameLevel, gameProgress, updateStamina, user, selectedAnimalId, petName]);
+  }, [handleAddXp, activeGameId, activeGameLevel, gameProgress, user, selectedAnimalId, petName]);
 
   const handleCoinCollide = useCallback((id: number) => {
     if (collectedCoinsRef.current.has(id)) return;
@@ -1029,15 +1175,12 @@ export default function App() {
         return next;
       });
       setActiveCarrotId(null);
-      updateStamina(20); // Eating a carrot fills stamina by 20
       setTimeout(() => {
         setBunnyAction(prev => prev !== 'sleep' ? 'idle' : prev);
       }, 2500);
     } else {
-      // Reached a non-carrot target
       setTargetPosition(null);
       setBunnyAction('idle');
-      handleAddXp(10); // Gain XP for walking to a target
     }
   };
 
@@ -1082,35 +1225,73 @@ export default function App() {
     }, 2000);
   }, [chests, handleAddXp, user]);
 
-  const handleJoystickMove = useCallback((dir: {x: number, z: number}) => {
-    if (bunnyAction === 'sleep') {
-      setBunnyAction('wake');
+  const applyMoveDirection = useCallback((dir: { x: number; z: number } | null) => {
+    if (!dir) {
+      moveDirRef.current = null;
       return;
     }
-    if (bunnyAction !== 'idle') {
+    const action = bunnyActionRef.current;
+    if (action === 'sleep') {
+      setBunnyAction('wake');
+      bunnyActionRef.current = 'wake';
+      return;
+    }
+    if (action !== 'idle') {
       setBunnyAction('idle');
+      bunnyActionRef.current = 'idle';
     }
     moveDirRef.current = dir;
-    
-    const now = Date.now();
-    // Add a tiny bit of XP for walking around occasionally
-    if (now - lastXpGainTime.current >= 5000) {
-      if (Math.random() < 0.3) {
-        handleAddXp(1);
-      }
-      lastXpGainTime.current = now;
-    }
+  }, []);
 
-    // Deplete 1 stamina every 30 seconds of active movement
-    if (now - lastStaminaDrainTime.current >= 30000) {
-      updateStamina(-1);
-      lastStaminaDrainTime.current = now;
+  const flushCombinedMoveDir = useCallback(() => {
+    const combined = combineMoveDirs(joystickDirRef.current, gamepadDirRef.current);
+    applyMoveDirection(combined);
+  }, [applyMoveDirection]);
+
+  flushMoveRef.current = flushCombinedMoveDir;
+
+  const onGamepadJump = useCallback(() => {
+    if (!worldInputEnabledRef.current) return;
+    if (bunnyActionRef.current === 'sleep') return;
+    setJumpNonce((n) => n + 1);
+    setBunnyAction('jump');
+    bunnyActionRef.current = 'jump';
+  }, []);
+
+  const onGamepadSleepToggle = useCallback(() => {
+    if (!worldInputEnabledRef.current) return;
+    const action = bunnyActionRef.current;
+    if (action === 'sleep') {
+      setBunnyAction('wake');
+      bunnyActionRef.current = 'wake';
+    } else {
+      setBunnyAction('sleep');
+      bunnyActionRef.current = 'sleep';
+      handleAddXp(5);
     }
-  }, [bunnyAction, handleAddXp, updateStamina]);
+  }, [handleAddXp]);
+
+  gamepadAButtonRef.current = onGamepadJump;
+  gamepadBButtonRef.current = onGamepadSleepToggle;
+
+  useGamepadWorldInput(
+    worldInputEnabledRef,
+    gamepadDirRef,
+    cameraStickRef,
+    flushMoveRef,
+    gamepadAButtonRef,
+    gamepadBButtonRef
+  );
+
+  const handleJoystickMove = useCallback((dir: {x: number, z: number}) => {
+    joystickDirRef.current = dir;
+    flushCombinedMoveDir();
+  }, [flushCombinedMoveDir]);
 
   const stopDir = useCallback(() => {
-    moveDirRef.current = null;
-  }, []);
+    joystickDirRef.current = null;
+    flushCombinedMoveDir();
+  }, [flushCombinedMoveDir]);
 
   useEffect(() => {
     if (showWelcomeOverlay || showTransitionVideo) return;
@@ -1254,9 +1435,55 @@ export default function App() {
     setTimeout(() => setGlobalMessage(null), 2000);
   }, [coins, unlockedCosmetics, updateCoins, user]);
 
+  useEffect(() => {
+    if (!user || showWelcomeOverlay) return;
+    let mounted = true;
+    let slotInterval: NodeJS.Timeout | null = null;
+
+    const attemptJoin = async () => {
+      try {
+        const allowed = await tryClaimSlot(user.uid);
+        if (!mounted) return;
+        if (allowed) {
+          setWorldIsFull(false);
+          if (slotInterval) {
+            clearInterval(slotInterval);
+            slotInterval = null;
+          }
+          await publishPresence(user.uid, {
+            petName,
+            animalId: selectedAnimalId,
+            equippedCosmetics
+          });
+          console.log('[attemptJoin] successfully published presence');
+        } else {
+          setWorldIsFull(true);
+          if (!slotInterval) {
+            slotInterval = setInterval(attemptJoin, 15000);
+          }
+        }
+      } catch (err) {
+        console.error('[attemptJoin] failed to publish presence:', err);
+      }
+    };
+
+    attemptJoin();
+
+    return () => {
+      mounted = false;
+      if (slotInterval) clearInterval(slotInterval);
+    };
+  }, [user, petName, selectedAnimalId, equippedCosmetics, showWelcomeOverlay]);
+
   return (
     <div className="fixed inset-0 w-full h-[100dvh] bg-sky-500 overflow-hidden select-none touch-none">
       <FPSMeter />
+      {worldIsFull && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 bg-yellow-500 text-white font-bold px-5 py-3 rounded-2xl shadow-xl z-50 animate-pulse text-center border-2 border-yellow-400">
+          World is full right now.<br/>
+          <span className="text-xs font-normal">Waiting for an open slot...</span>
+        </div>
+      )}
       {!showWelcomeOverlay && (
         <>
           <Canvas 
@@ -1266,7 +1493,17 @@ export default function App() {
             dpr={[1, 1.5]}
           >
         <fog attach="fog" args={['#0ea5e9', 30, 250]} />
-        <CameraController bunnyPositionRef={bunnyPositionRef} stage={'animal'} />
+        <CameraController
+          bunnyPositionRef={bunnyPositionRef}
+          stage={'animal'}
+          cameraStickRef={cameraStickRef}
+          cameraTouchRef={cameraTouchRef}
+          movementBasisRef={movementBasisRef}
+        />
+        <TouchCameraControls
+          cameraTouchRef={cameraTouchRef}
+          enabledRef={worldInputEnabledRef}
+        />
         <AnimatedSky />
         <ambientLight intensity={0.15} />
         <StaticLight />
@@ -1292,20 +1529,30 @@ export default function App() {
           />
 
           <>
+            {remotePlayers.map((p) => (
+              <RemotePlayer 
+                key={p.uid} 
+                player={p} 
+                onMessageUser={(uid, petName, animalId) => {
+                  setPendingDmTarget({ uid, petName, animalId });
+                  setIsMessagesOpen(true);
+                }} 
+              />
+            ))}
             {selectedAnimalId === 'unicorn' ? (
               <Unicorn 
                 position={[0, 0, 0]} 
                 targetPosition={targetPosition}
                 moveDirRef={moveDirRef}
+                movementBasisRef={movementBasisRef}
                 bunnyPositionRef={bunnyPositionRef}
                 onReachTarget={handleReachTarget}
                 action={bunnyAction}
+                jumpNonce={jumpNonce}
                 onChat={() => {
                   handleAddXp(5);
-                  updateStamina(5);
                 }}
                 ageInMonths={ageInMonths}
-                stamina={stamina}
                 obstacles={[
                   ...chests.map(chest => ({ position: new THREE.Vector3(chest.x, getTerrainHeight(chest.x, chest.z), chest.z), radius: 2.0 })),
                   { position: ARCADE_POS, radius: 2.5 }
@@ -1317,15 +1564,15 @@ export default function App() {
                 position={[0, 0, 0]} 
                 targetPosition={targetPosition}
                 moveDirRef={moveDirRef}
+                movementBasisRef={movementBasisRef}
                 bunnyPositionRef={bunnyPositionRef}
                 onReachTarget={handleReachTarget}
                 action={bunnyAction}
+                jumpNonce={jumpNonce}
                 onChat={() => {
                   handleAddXp(5);
-                  updateStamina(5);
                 }}
                 ageInMonths={ageInMonths}
-                stamina={stamina}
                 obstacles={[
                   ...chests.map(chest => ({ position: new THREE.Vector3(chest.x, getTerrainHeight(chest.x, chest.z), chest.z), radius: 2.0 })),
                   { position: ARCADE_POS, radius: 2.5 }
@@ -1368,22 +1615,16 @@ export default function App() {
 
           <div className="w-full h-full max-w-7xl relative">
             <div className="absolute top-6 left-6 md:top-8 md:left-8 lg:top-10 lg:left-10 z-20 flex flex-row gap-3 pointer-events-auto">
-              {/* Stamina Radial Meter */}
-              <div className="relative w-12 h-12 md:w-14 md:h-14 bg-white/90 backdrop-blur-sm rounded-full shadow-lg flex items-center justify-center">
-                <svg className="w-full h-full transform -rotate-90 absolute inset-0">
-                  <circle cx="50%" cy="50%" r="40%" stroke="currentColor" strokeWidth="3" fill="transparent" className="text-green-100" />
-                  <motion.circle
-                    cx="50%" cy="50%" r="40%"
-                    stroke="currentColor" strokeWidth="3" fill="transparent"
-                    className="text-green-500"
-                    strokeDasharray="251.2%"
-                    initial={{ strokeDashoffset: "251.2%" }}
-                    animate={{ strokeDashoffset: `${251.2 * (1 - stamina / 100)}%` }}
-                    strokeLinecap="round"
-                  />
-                </svg>
-                <Battery className="w-5 h-5 md:w-6 md:h-6 text-green-500" />
-              </div>
+              <button
+                type="button"
+                onClick={() => setIsStatusOpen(true)}
+                aria-label="Open pet profile"
+                className={`relative w-12 h-12 md:w-14 md:h-14 bg-white/90 backdrop-blur-sm rounded-full shadow-lg flex items-center justify-center transition-all ${
+                  isStatusOpen ? 'ring-2 ring-[#FF6B6B] scale-105' : 'hover:scale-105 active:scale-95'
+                }`}
+              >
+                <User className="w-5 h-5 md:w-6 md:h-6 text-[#FF6B6B]" strokeWidth={2.5} />
+              </button>
 
               {/* Coin Counter */}
               <div className="relative h-12 md:h-14 bg-white/90 backdrop-blur-sm rounded-full shadow-lg flex items-center justify-center px-4 gap-2">
@@ -1412,11 +1653,21 @@ export default function App() {
             </div>
 
             <div className="pointer-events-auto absolute bottom-8 right-6 md:bottom-12 md:right-8 lg:bottom-16 lg:right-10 flex flex-col items-center gap-1.5 z-50">
-              <ActionButton
-                icon={<Clipboard className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />}
-                onClick={() => setIsStatusOpen(true)}
-                active={isStatusOpen}
-              />
+              <div className="relative">
+                <ActionButton
+                  icon={<MessageCircle className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />}
+                  onClick={() => setIsMessagesOpen(true)}
+                  active={isMessagesOpen}
+                />
+                {totalUnread > 0 && (
+                  <span
+                    className="pointer-events-none absolute -top-1 -right-1 min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-black flex items-center justify-center shadow-md border-2 border-white"
+                    aria-label={`${totalUnread} unread`}
+                  >
+                    {totalUnread > 9 ? '9+' : totalUnread}
+                  </span>
+                )}
+              </div>
               <ActionButton
                 icon={<Shirt className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />}
                 onClick={() => setIsCosmeticsOpen(true)}
@@ -1455,70 +1706,12 @@ export default function App() {
         </>
       )}
 
-      {miniGameState === 'playing' && activeGameId === 'bottle_rama' && (
-        <div className="fixed inset-0 z-[100] bg-black">
-          <iframe 
-            key={`bottle_rama_${activeGameLevel}`}
-            src={`/bottle-rama.html?level=${activeGameLevel}${autoStartGame ? '&autoStart=true' : ''}`}
-            className="w-full h-full border-none"
-            title="Bottle-Rama Game"
-          />
-        </div>
-      )}
-
-      {miniGameState === 'playing' && activeGameId === 'naptime_runner' && (
-        <div className="fixed inset-0 z-[100] bg-black">
-          <iframe 
-            key={`naptime_runner_${activeGameLevel}`}
-            src={`/naptime-runner.html?level=${activeGameLevel}${autoStartGame ? '&autoStart=true' : ''}`}
-            className="w-full h-full border-none"
-            title="Naptime Runner Game"
-          />
-        </div>
-      )}
-
-      {miniGameState === 'playing' && activeGameId === 'toy_bin_bonanza' && (
-        <div className="fixed inset-0 z-[100] bg-black">
-          <iframe 
-            key={`toy_bin_bonanza_${activeGameLevel}`}
-            src={`/toy-bin-bonanza.html?level=${activeGameLevel}${autoStartGame ? '&autoStart=true' : ''}`}
-            className="w-full h-full border-none"
-            title="Toy Bin Bonanza Game"
-          />
-        </div>
-      )}
-
-      {miniGameState === 'playing' && activeGameId === 'tiny_chef' && (
-        <div className="fixed inset-0 z-[100] bg-black">
-          <iframe 
-            key={`tiny_chef_${activeGameLevel}`}
-            src={`/tiny-chef.html?level=${activeGameLevel}${autoStartGame ? '&autoStart=true' : ''}`}
-            className="w-full h-full border-none"
-            title="Tiny Chef Game"
-          />
-        </div>
-      )}
-
-      {miniGameState === 'playing' && activeGameId === 'hide_and_seek' && (
-        <div className="fixed inset-0 z-[100] bg-black">
-          <iframe 
-            key={`hide_and_seek_${activeGameLevel}`}
-            src={`/hide-and-seek.html?level=${activeGameLevel}${autoStartGame ? '&autoStart=true' : ''}`}
-            className="w-full h-full border-none"
-            title="Hide & Seek Game"
-          />
-        </div>
-      )}
-
-      {miniGameState === 'playing' && activeGameId === 'swaddle_gami' && (
-        <div className="fixed inset-0 z-[100] bg-black">
-          <iframe 
-            key={`swaddle_gami_${activeGameLevel}`}
-            src={`/swaddle-gami.html?level=${activeGameLevel}${autoStartGame ? '&autoStart=true' : ''}`}
-            className="w-full h-full border-none"
-            title="Swaddle-gami Game"
-          />
-        </div>
+      {miniGameState === 'playing' && activeGameId && (
+        <MiniGameIframe
+          gameId={activeGameId}
+          level={activeGameLevel}
+          autoStart={autoStartGame}
+        />
       )}
 
       {isStatusOpen && (
@@ -1526,7 +1719,6 @@ export default function App() {
           ageInMonths={ageInMonths}
           currentXp={currentXp}
           requiredXp={requiredXp}
-          stamina={stamina}
           onClose={() => setIsStatusOpen(false)}
           animalName={petName || selectedAnimalId}
           onNameChange={handleNameChange}
@@ -1534,6 +1726,10 @@ export default function App() {
           onOpenLeaderboard={() => {
             setIsStatusOpen(false);
             setIsLeaderboardsOpen(true);
+          }}
+          onOpenMessages={() => {
+            setIsStatusOpen(false);
+            setIsMessagesOpen(true);
           }}
           onSelectGame={(gameId) => {
             setIsStatusOpen(false);
@@ -1589,6 +1785,20 @@ export default function App() {
       <GlobalLeaderboardsOverlay
         isOpen={isLeaderboardsOpen}
         onClose={() => setIsLeaderboardsOpen(false)}
+        onMessageUser={(uid, petName, animalId) => {
+          setPendingDmTarget({ uid, petName, animalId });
+          setIsLeaderboardsOpen(false);
+          setIsMessagesOpen(true);
+        }}
+      />
+
+      <MessagesOverlay
+        isOpen={isMessagesOpen}
+        onClose={() => setIsMessagesOpen(false)}
+        myPetName={petName || selectedAnimalId}
+        myAnimalId={selectedAnimalId}
+        openDmWith={pendingDmTarget}
+        onDmTargetConsumed={() => setPendingDmTarget(null)}
       />
 
       <CosmeticsOverlay

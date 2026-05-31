@@ -65,7 +65,7 @@
             text-shadow: 2px 2px 0px #8e44ad, -1px -1px 0px #9b59b6;
         }
 
-        .star { color: #555; font-size: 16px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star { color: #555; font-size: 26px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
         .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
         @keyframes pop {
             0% { transform: scale(1); }
@@ -198,7 +198,7 @@
             <p class="text-yellow-400 text-sm mb-8 font-bold">SCORE: <span id="final-score">0</span></p>
             <div class="flex flex-col gap-4 w-full max-w-[200px] mx-auto">
                 <button id="restart-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#000] active:shadow-none active:translate-y-1 transition-all">
-                    Try Again
+                    Play Again
                 </button>
                 <button id="next-level-btn" class="hidden bg-green-500 hover:bg-green-400 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
                     Next Level
@@ -209,15 +209,6 @@
             </div>
         </div>
         
-        <!-- Next Level Screen -->
-        <div id="next-level-screen" class="absolute inset-0 bg-green-900/90 flex flex-col items-center justify-center z-30 hidden p-4 text-center">
-            <h1 class="text-3xl text-white mb-4 text-glow">ESCAPED!</h1>
-            <p class="text-white text-xs mb-8 uppercase">The baby is still asleep.</p>
-            <button id="next-btn" class="bg-white text-black hover:bg-gray-200 border-4 border-black px-6 py-4 rounded text-sm uppercase cursor-pointer">
-                Next Quest
-            </button>
-        </div>
-
         <!-- Touch Controls -->
         <div id="controls" class="controls-container hidden">
             <div id="btn-left" class="touch-btn">&lt;</div>
@@ -263,19 +254,27 @@
 
         // Game State
         const urlParams = new URLSearchParams(window.location.search);
-        const currentLevelIndex = parseInt(urlParams.get('level')) || 1;
+        const GAME_ID = 'hide_and_seek';
+        // Per SCORING_GUIDE.md §6: clamp 1..5; reject 0/negative/non-numeric.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevelIndex = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
         const questsRequired = currentLevelIndex; // 1 to 5
-        
+
         let gameState = 'START';
         let questsCompleted = 0;
         let score = 0;
         let lastTime = 0;
         let cameraX = 0;
         let gameLoopRunning = false;
-        
+        let resultPosted = false;
+
         let timeElapsed = 0;
-        let earnedStars = 3;
-        
+        let earnedStars = 0;
+
+        // Track average baby wakefulness over the round (time-weighted).
+        let totalWakefulness = 0;
+        let totalDuration = 0;
+
         let noiseLevel = 0; // 0 to 100
         const NOISE_THRESHOLD = 70; // Noise above this wakes baby
         
@@ -330,10 +329,10 @@
         });
 
         // Setup Exit buttons
-        const exitGame = () => { 
+        const exitGame = () => {
             gameLoopRunning = false;
-            window.parent.postMessage({ type: 'EXIT_GAME', score: score }, '*'); 
-            score = 0;
+            // Navigation only — crediting (if any) already happened via LEVEL_RESULT.
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
         };
         document.getElementById('start-exit-btn').addEventListener('click', exitGame);
         document.getElementById('hud-exit-btn').addEventListener('click', exitGame);
@@ -341,15 +340,36 @@
 
         document.getElementById('start-btn').addEventListener('click', () => initGame(true));
         document.getElementById('restart-btn').addEventListener('click', () => initGame(true));
-        
+
         const nextLevelBtn = document.getElementById('next-level-btn');
         if (nextLevelBtn) {
             nextLevelBtn.addEventListener('click', () => {
-                window.parent.postMessage({ type: 'NEXT_LEVEL', score: score, stars: earnedStars, level: currentLevelIndex }, '*');
+                // Navigation only.
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: currentLevelIndex }, '*');
             });
         }
-        
-        document.getElementById('next-btn').addEventListener('click', () => { levelIdx++; initGame(false); });
+
+        function postLevelResult(finalScore, finalStars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
+            window.parent.postMessage({
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: currentLevelIndex,
+                stars: finalStars,
+                score: finalScore,
+                outcome
+            }, '*');
+        }
+
+        function avgWakefulness() {
+            return totalDuration > 0 ? totalWakefulness / totalDuration : 0;
+        }
+
+        function canonicalScore() {
+            // Per SCORING_GUIDE.md §3.
+            return questsCompleted * 100 + Math.max(0, 100 - Math.floor(avgWakefulness()));
+        }
 
         // --- Logic ---
         function initGame(resetAll) {
@@ -357,12 +377,15 @@
                 questsCompleted = 0;
                 score = 0;
                 timeElapsed = 0;
-                earnedStars = 3;
-                document.getElementById('star-1').className = 'star earned';
-                document.getElementById('star-2').className = 'star earned';
-                document.getElementById('star-3').className = 'star earned';
+                earnedStars = 0;
+                resultPosted = false;
+                totalWakefulness = 0;
+                totalDuration = 0;
+                document.getElementById('star-1').className = 'star';
+                document.getElementById('star-2').className = 'star';
+                document.getElementById('star-3').className = 'star';
             }
-            
+
             // Pick a random quest
             let nextLevel = LEVELS[Math.floor(Math.random() * LEVELS.length)];
             // Don't repeat the exact same quest back-to-back if possible
@@ -370,28 +393,27 @@
                 nextLevel = LEVELS.find(l => l.id !== currentLevel.id);
             }
             currentLevel = nextLevel;
-            
+
             bunny.x = 30; // Start at door
             bunny.hasItem = false;
-            
+
             baby.wakefulness = 0;
             baby.state = 'SLEEPING';
             // Increase frequency of lookouts as they get further
             const difficultyScale = Math.max(0.3, 1 - (currentLevelIndex * 0.1) - (questsCompleted * 0.05));
             baby.nextCheckTimer = (3000 + Math.random() * 3000) * difficultyScale;
-            
+
             noiseLevel = 0;
             objective = { progress: 0, done: false, targetX: currentLevel.targetX, targetType: currentLevel.target };
             particles = [];
-            
+
             updateUI();
-            
+
             gameState = 'PLAY';
             startScreen.classList.add('hidden');
             gameOverScreen.classList.add('hidden');
-            nextLevelScreen.classList.add('hidden');
             controls.classList.remove('hidden');
-            
+
             lastTime = performance.now();
             if (!gameLoopRunning) {
                 gameLoopRunning = true;
@@ -402,12 +424,19 @@
         function triggerGameOver(reason, stars = 0) {
             gameState = 'GAMEOVER';
             controls.classList.add('hidden');
+
+            const finalScore = canonicalScore();
+            score = finalScore;
+
             failReasonEl.innerText = reason;
-            document.getElementById('final-score').innerText = score;
-            
-            document.getElementById('game-over-screen').querySelector('h1').innerText = reason === "LEVEL CLEAR!" ? "LEVEL CLEAR!" : "GAME OVER";
-            document.getElementById('game-over-screen').querySelector('h1').className = reason === "LEVEL CLEAR!" ? "text-4xl text-white mb-4 text-glow" : "text-4xl text-white mb-4 alert-glow";
-            
+            document.getElementById('final-score').innerText = finalScore;
+
+            const isWin = reason === "LEVEL CLEAR!";
+            document.getElementById('game-over-screen').querySelector('h1').innerText = isWin ? "LEVEL CLEAR!" : "GAME OVER";
+            document.getElementById('game-over-screen').querySelector('h1').className = isWin ? "text-4xl text-white mb-4 text-glow" : "text-4xl text-white mb-4 alert-glow";
+            gameOverScreen.classList.remove(isWin ? 'bg-red-900/90' : 'bg-purple-900/90');
+            gameOverScreen.classList.add(isWin ? 'bg-purple-900/90' : 'bg-red-900/90');
+
             const finalStarsContainer = document.getElementById('final-stars-display');
             if (finalStarsContainer) {
                 const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
@@ -421,26 +450,28 @@
                     }
                 });
             }
-            
+
             // Screen shake
             document.getElementById('game-container').style.transform = 'translate(10px, 10px)';
             setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(-10px, -10px)'; }, 50);
             setTimeout(() => { document.getElementById('game-container').style.transform = 'translate(0, 0)'; }, 100);
-            
+
             const nextLevelBtn = document.getElementById('next-level-btn');
             if (nextLevelBtn) {
-                if (reason === "LEVEL CLEAR!" && currentLevelIndex < 5) {
+                if (isWin && stars > 0 && currentLevelIndex < 5) {
                     nextLevelBtn.classList.remove('hidden');
                 } else {
                     nextLevelBtn.classList.add('hidden');
                 }
             }
-            
+
+            // Win → "Play Again"; fail → "Try Again".
+            const restartBtn = document.getElementById('restart-btn');
+            if (restartBtn) restartBtn.innerText = isWin ? 'Play Again' : 'Try Again';
+
             gameOverScreen.classList.remove('hidden');
 
-            // Send score
-            window.parent.postMessage({ type: 'GAME_OVER', score: score, stars: stars }, '*');
-            score = 0; // Prevent double XP if they exit from here
+            postLevelResult(finalScore, stars, isWin && stars > 0 ? 'win' : 'fail');
         }
 
         function spawnZzz() {
@@ -457,13 +488,20 @@
 
             // Timer & Stars conditions
             timeElapsed += dt;
+            // Time-weighted average wakefulness for the canonical score formula.
+            totalWakefulness += baby.wakefulness * dt;
+            totalDuration += dt;
 
-            let currentStars = 1;
-            if (timeElapsed < 15000 * questsRequired) currentStars = 3;
-            else if (timeElapsed < 30000 * questsRequired) currentStars = 2;
-            
-            if (currentStars !== earnedStars) {
-                earnedStars = currentStars;
+            // Live HUD preview only — final stars are computed at win/fail time.
+            let previewStars = 0;
+            if (questsCompleted > 0) previewStars = 1;
+            if (questsCompleted >= questsRequired) {
+                if (timeElapsed < 15000 * questsRequired) previewStars = 3;
+                else if (timeElapsed < 30000 * questsRequired) previewStars = 2;
+            }
+
+            if (previewStars !== earnedStars) {
+                earnedStars = previewStars;
                 document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
                 document.getElementById('star-2').className = earnedStars >= 2 ? 'star earned' : 'star';
                 document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
@@ -557,9 +595,10 @@
                     objective.progress = 100;
                     objective.done = true;
                     if(currentLevel.id === 'bottle') bunny.hasItem = true;
-                    
-                    score += 100 + (100 - Math.floor(baby.wakefulness));
+
                     questsCompleted++;
+                    // Live HUD score from canonical formula (§3).
+                    score = canonicalScore();
                     
                     if (questsCompleted < questsRequired) {
                         // Immediately start next quest
@@ -579,35 +618,12 @@
 
             // --- Win Condition ---
             if (questsCompleted >= questsRequired && bunny.x < 30) {
-                gameState = 'GAMEOVER';
-                controls.classList.add('hidden');
-                
+                // Per SCORING_GUIDE.md §2: 1★ = cleared, 2★ < 30s/quest avg, 3★ < 15s/quest avg.
                 let finalStars = 1;
+                if (timeElapsed < 30000 * questsRequired) finalStars = 2;
                 if (timeElapsed < 15000 * questsRequired) finalStars = 3;
-                else if (timeElapsed < 30000 * questsRequired) finalStars = 2;
-                
-                failReasonEl.innerText = "The baby is still asleep.";
-                document.getElementById('game-over-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
-                document.getElementById('game-over-screen').querySelector('h1').className = "text-4xl text-white mb-4 text-glow";
-                document.getElementById('final-score').innerText = "CLEARED!";
-                
-                const finalStarsContainer = document.getElementById('final-stars-display');
-                if (finalStarsContainer) {
-                    const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
-                    finalStarSpans.forEach((star, index) => {
-                        if (index < finalStars) {
-                            star.classList.add('earned');
-                            star.classList.remove('empty');
-                        } else {
-                            star.classList.remove('earned');
-                            star.classList.add('empty');
-                        }
-                    });
-                }
-                
-                gameOverScreen.classList.remove('hidden');
-                window.parent.postMessage({ type: 'GAME_OVER', score: score, stars: finalStars }, '*');
-                score = 0;
+
+                triggerGameOver("LEVEL CLEAR!", finalStars);
                 return;
             }
 
@@ -647,7 +663,8 @@
                 }
             }
             levelEl.innerText = questsCompleted + "/" + questsRequired;
-            scoreEl.innerText = score;
+            // Live canonical score (§3) — always reflects best-case if player finished now.
+            scoreEl.innerText = canonicalScore();
             if (timerEl) timerEl.innerText = Math.floor(timeElapsed / 1000);
         }
 
@@ -803,22 +820,53 @@
         function drawBunny(x, y) {
             const w = bunny.w;
             const h = bunny.h;
+            const facing = (x < objective.targetX) ? 1 : -1; // +1 = right
+            const hop = isMoving ? Math.sin(performance.now() / 120) * 1.5 : 0;
 
-            ctx.fillStyle = '#FF99CC'; 
-            ctx.fillRect(x, y + h*0.4, w, h*0.6); // Body
-            
-            // Ears - tilt slightly if sneaking/moving
-            let earOffset = isMoving ? (Math.floor(performance.now()/150)%2)*4 : 0;
-            ctx.fillRect(x + w*0.15, y + earOffset, w*0.2, h*0.4); 
-            ctx.fillRect(x + w*0.65, y - earOffset, w*0.2, h*0.4); 
-            
-            // Eyes
-            ctx.fillStyle = '#FF0055';
-            // Look direction based on objective relative to bunny
-            let eyeX = (x < objective.targetX) ? w*0.3 : w*0.1;
-            ctx.fillRect(x + eyeX, y + h*0.5, w*0.15, w*0.15); 
-            ctx.fillRect(x + eyeX + w*0.4, y + h*0.5, w*0.15, w*0.15);
-            
+            // Layer 1: cotton-ball tail, peeking out behind the body on the
+            // side opposite of facing.
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(x + w*0.5 - facing * w*0.42, y + h*0.7, w*0.13, 0, Math.PI*2); ctx.fill();
+
+            // Layer 2: soft pink ellipse body (matches the round head).
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.5, y + h*0.72, w*0.42, h*0.27, 0, 0, Math.PI*2); ctx.fill();
+
+            // Layer 3: feet — alternating hop offsets when moving.
+            const footY = y + h*0.97;
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(x + w*0.32, footY - hop, w*0.14, h*0.05, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.68, footY + hop, w*0.14, h*0.05, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#ffd2e2';
+            ctx.beginPath(); ctx.ellipse(x + w*0.32, footY - hop, w*0.06, h*0.022, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.68, footY + hop, w*0.06, h*0.022, 0, 0, Math.PI*2); ctx.fill();
+
+            // --- Layer 4: circle-mascot head (matches swaddle-gami / bottle-rama) ---
+            const headCx = x + w*0.5;
+            const headCy = y + h*0.32;
+            const headR  = w*0.42;
+
+            // Ears - ellipses behind the head, gentle hop tilt while moving.
+            let earOffset = isMoving ? (Math.floor(performance.now()/150)%2)*3 : 0;
+            ctx.fillStyle = '#ff99cc';
+            ctx.beginPath(); ctx.ellipse(headCx - headR*0.55, headCy - headR*1.1 + earOffset, headR*0.32, headR*0.85, -0.2, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(headCx + headR*0.55, headCy - headR*1.1 - earOffset, headR*0.32, headR*0.85,  0.2, 0, Math.PI*2); ctx.fill();
+
+            // Head circle.
+            ctx.beginPath(); ctx.arc(headCx, headCy, headR, 0, Math.PI*2); ctx.fill();
+
+            // Eyes - small dark-red circles, biased toward the objective.
+            const eyeShift = facing * headR*0.12;
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx - headR*0.35 + eyeShift, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(headCx + headR*0.35 + eyeShift, headCy - headR*0.05, headR*0.13, 0, Math.PI*2); ctx.fill();
+
+            // White snout (muzzle), with the nose sitting at the top of it.
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.ellipse(headCx, headCy + headR*0.45, headR*0.32, headR*0.22, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#c0392b';
+            ctx.beginPath(); ctx.arc(headCx, headCy + headR*0.32, headR*0.13, 0, Math.PI*2); ctx.fill();
+
             // Draw noise meter above bunny head
             ctx.fillStyle = '#000';
             ctx.fillRect(x - 5, y - 20, 50, 8);

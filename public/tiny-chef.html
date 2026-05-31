@@ -152,12 +152,8 @@
         <div id="start-screen" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 p-4 text-center">
             <h1 class="text-3xl sm:text-4xl text-white mb-8 text-glow leading-loose">TINY<br>CHEF</h1>
             <p class="text-gray-300 text-[10px] sm:text-xs mb-8 leading-loose uppercase">
-                Swipe to cut the food.<br>
-                Eyeball the colored portions<br>
-                on the plate and match them.<br>
-                Bend swipes for angle cuts<br>
-                (each segment uses one cut).<br>
-                Tap Plate It! when ready.
+                Cut the food to match the baby plate fractions!<br>
+                Complete all dishes before time runs out!
             </p>
             <div class="flex flex-col gap-4">
                 <button id="start-btn" class="bg-orange-600 hover:bg-orange-500 text-white border-4 border-white px-6 py-4 rounded text-sm uppercase animate-pulse cursor-pointer shadow-[4px_4px_0_0_#fff] active:shadow-none active:translate-y-1 transition-all">
@@ -268,7 +264,7 @@
 
         // Canonical score (SCORING_GUIDE.md §3): dishes*100 + bonus(stars).
         function starBonus(stars) {
-            return stars === 3 ? 100 : stars === 2 ? 50 : 0;
+            return (stars || 0) * 50;
         }
         function canonicalScore(stars) {
             return dishesCompleted * 100 + starBonus(stars || 0);

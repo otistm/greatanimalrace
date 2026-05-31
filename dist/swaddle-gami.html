@@ -70,7 +70,7 @@
             animation: pulse-green 0.5s infinite alternate;
         }
 
-        .star { color: #555; font-size: 16px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
+        .star { color: #555; font-size: 26px; text-shadow: 1px 1px 0 #000; transition: all 0.3s; }
         .star.earned { color: #f1c40f; text-shadow: 1px 1px 0 #d35400; animation: pop 0.3s ease-out; }
         @keyframes pop {
             0% { transform: scale(1); }
@@ -223,15 +223,36 @@
 
         // Game State Variables
         const urlParams = new URLSearchParams(window.location.search);
-        const currentLevelIndex = parseInt(urlParams.get('level')) || 1;
+        const GAME_ID = 'swaddle_gami';
+        // Per SCORING_GUIDE.md §6: clamp ?level= to 1..5.
+        const rawLevel = parseInt(urlParams.get('level'));
+        const currentLevelIndex = Math.min(5, Math.max(1, isNaN(rawLevel) ? 1 : rawLevel));
         const puzzlesRequired = currentLevelIndex + 1; // 2 to 6
-        
+
         let gameState = 'START';
         let puzzlesCompleted = 0;
         let lastTime = 0;
         let timeLeft = puzzlesRequired * 25000;
-        let earnedStars = 3;
+        let earnedStars = 0;
         let totalScore = 0;
+        let resultPosted = false;
+
+        // Canonical score (SCORING_GUIDE.md §3): puzzlesSolved*100 + secondsRemaining.
+        function canonicalScore() {
+            return puzzlesCompleted * 100 + Math.max(0, Math.floor(timeLeft / 1000));
+        }
+        function postResult(stars, outcome) {
+            if (resultPosted) return;
+            resultPosted = true;
+            window.parent.postMessage({
+                type: 'LEVEL_RESULT',
+                gameId: GAME_ID,
+                level: currentLevelIndex,
+                stars: stars,
+                score: canonicalScore(),
+                outcome: outcome
+            }, '*');
+        }
         
         let pieces = [];
         let slots = [];
@@ -347,15 +368,15 @@
         const nextLvlBtn = document.getElementById('next-level-btn');
         if (nextLvlBtn) {
             nextLvlBtn.addEventListener('click', () => {
-                window.parent.postMessage({ type: 'NEXT_LEVEL', score: totalScore, stars: earnedStars, level: currentLevelIndex }, '*');
+                // Navigation-only per SCORING_GUIDE.md §1.
+                window.parent.postMessage({ type: 'NEXT_LEVEL', gameId: GAME_ID, level: currentLevelIndex }, '*');
             });
         }
         document.getElementById('next-btn').addEventListener('click', () => initGame(false));
-        
+
         const exitGame = () => {
             gameState = 'GAMEOVER';
-            window.parent.postMessage({ type: 'EXIT_GAME', score: totalScore }, '*');
-            totalScore = 0;
+            window.parent.postMessage({ type: 'EXIT_GAME', gameId: GAME_ID }, '*');
         };
         const startExitBtn = document.getElementById('start-exit-btn');
         if (startExitBtn) startExitBtn.addEventListener('click', exitGame);
@@ -379,8 +400,12 @@
             { sequence: [2, 3, 4] }     // Type 1: Rectangle -> Square -> Small Triangle
         ];
 
-        // Levels Database
+        // Levels Database — 20 unique tangram-inspired puzzles. The total puzzles
+        // needed across L1..L5 is 2+3+4+5+6 = 20, and each level draws a
+        // non-overlapping slice (see `puzzleOffset` below), so no puzzle repeats
+        // anywhere in a full play-through.
         const LEVELS = [
+            // --- L1 (offset 0, 2 puzzles): warm-up shapes ---
             {
                 name: "BUNNY",
                 slots: [
@@ -407,6 +432,7 @@
                     { type: 1, x: 320, y: 450, color: '#8fd3f4', fold: 0, rot: 0 }
                 ]
             },
+            // --- L2 (offset 2, 3 puzzles) ---
             {
                 name: "HOUSE",
                 slots: [
@@ -434,8 +460,241 @@
                     { type: 1, x: 250, y: 450, color: '#0fd850', fold: 0, rot: 0 },
                     { type: 1, x: 350, y: 450, color: '#f9f047', fold: 0, rot: 0 }
                 ]
+            },
+            {
+                name: "CAT",
+                slots: [
+                    { x: 200, y: 240, shape: 3, rot: 0 }, // Head
+                    { x: 175, y: 195, shape: 4, rot: 3 }, // Left ear
+                    { x: 225, y: 195, shape: 4, rot: 0 }  // Right ear
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#ffd166', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#ef476f', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#06d6a0', fold: 0, rot: 0 }
+                ]
+            },
+            // --- L3 (offset 5, 4 puzzles) ---
+            {
+                name: "SAILBOAT",
+                slots: [
+                    { x: 200, y: 290, shape: 2, rot: 0 }, // Hull
+                    { x: 180, y: 220, shape: 1, rot: 0 }, // Sail
+                    { x: 250, y: 200, shape: 3, rot: 0 }  // Crow's nest
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#118ab2', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#fdfd96', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ffadad', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "ARROW",
+                slots: [
+                    { x: 170, y: 240, shape: 2, rot: 0 }, // Shaft
+                    { x: 240, y: 215, shape: 4, rot: 1 }, // Arrowhead top
+                    { x: 240, y: 265, shape: 4, rot: 0 }  // Arrowhead bottom
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#9b5de5', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#f15bb5', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#fee440', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "TREE",
+                slots: [
+                    { x: 200, y: 290, shape: 3, rot: 0 }, // Trunk
+                    { x: 170, y: 235, shape: 4, rot: 3 }, // Left leaves
+                    { x: 230, y: 235, shape: 4, rot: 0 }  // Right leaves
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#8d6e63', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#43aa8b', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#90be6d', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "BOWTIE",
+                slots: [
+                    { x: 140, y: 240, shape: 1, rot: 0 }, // Left wing
+                    { x: 260, y: 240, shape: 1, rot: 2 }, // Right wing
+                    { x: 200, y: 240, shape: 3, rot: 0 }  // Knot
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#e63946', fold: 0, rot: 0 },
+                    { type: 0, x: 230, y: 450, color: '#ffafcc', fold: 0, rot: 0 },
+                    { type: 1, x: 340, y: 450, color: '#a8dadc', fold: 0, rot: 0 }
+                ]
+            },
+            // --- L4 (offset 9, 5 puzzles) ---
+            {
+                name: "BIRD",
+                slots: [
+                    { x: 200, y: 250, shape: 1, rot: 0 }, // Body
+                    { x: 165, y: 200, shape: 4, rot: 1 }, // Wing up
+                    { x: 250, y: 290, shape: 4, rot: 3 }  // Wing down
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#3a86ff', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#8338ec', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ffbe0b', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "CRYSTAL",
+                slots: [
+                    { x: 200, y: 195, shape: 4, rot: 0 }, // Top facet
+                    { x: 200, y: 250, shape: 1, rot: 0 }, // Body
+                    { x: 200, y: 305, shape: 4, rot: 2 }  // Bottom facet
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#80ed99', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#22c55e', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#0ea5e9', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "CASTLE",
+                slots: [
+                    { x: 200, y: 290, shape: 2, rot: 0 }, // Base wall
+                    { x: 160, y: 235, shape: 3, rot: 0 }, // Left tower
+                    { x: 240, y: 235, shape: 3, rot: 0 }, // Right tower
+                    { x: 200, y: 195, shape: 4, rot: 0 }  // Flag
+                ],
+                pieces: [
+                    { type: 1, x: 60, y: 450, color: '#cdb4db', fold: 0, rot: 0 },
+                    { type: 1, x: 160, y: 450, color: '#bde0fe', fold: 0, rot: 0 },
+                    { type: 1, x: 260, y: 450, color: '#a2d2ff', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#ffc8dd', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "CRAB",
+                slots: [
+                    { x: 200, y: 250, shape: 3, rot: 0 }, // Body
+                    { x: 155, y: 240, shape: 4, rot: 1 }, // Left claw
+                    { x: 245, y: 240, shape: 4, rot: 2 }  // Right claw
+                ],
+                pieces: [
+                    { type: 1, x: 80, y: 450, color: '#ff6b6b', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#ffa07a', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ff8c94', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "ROBOT",
+                slots: [
+                    { x: 200, y: 180, shape: 3, rot: 0 }, // Head
+                    { x: 200, y: 250, shape: 2, rot: 1 }, // Body
+                    { x: 145, y: 245, shape: 3, rot: 0 }, // Left arm
+                    { x: 255, y: 245, shape: 3, rot: 0 }  // Right arm
+                ],
+                pieces: [
+                    { type: 1, x: 60, y: 450, color: '#adb5bd', fold: 0, rot: 0 },
+                    { type: 1, x: 160, y: 450, color: '#dee2e6', fold: 0, rot: 0 },
+                    { type: 1, x: 260, y: 450, color: '#ced4da', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#6c757d', fold: 0, rot: 0 }
+                ]
+            },
+            // --- L5 (offset 14, 6 puzzles): the gauntlet ---
+            {
+                name: "UMBRELLA",
+                slots: [
+                    { x: 200, y: 200, shape: 1, rot: 2 }, // Canopy
+                    { x: 200, y: 280, shape: 2, rot: 1 }, // Handle
+                    { x: 200, y: 320, shape: 4, rot: 3 }  // Hook
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#ff006e', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#fb5607', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ffbe0b', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "WHALE",
+                slots: [
+                    { x: 200, y: 250, shape: 1, rot: 0 }, // Body
+                    { x: 260, y: 220, shape: 4, rot: 1 }, // Tail upper
+                    { x: 260, y: 280, shape: 4, rot: 0 }, // Tail lower
+                    { x: 165, y: 195, shape: 3, rot: 0 }  // Spout cloud
+                ],
+                pieces: [
+                    { type: 0, x: 80, y: 450, color: '#1e3a8a', fold: 0, rot: 0 },
+                    { type: 1, x: 200, y: 450, color: '#3b82f6', fold: 0, rot: 0 },
+                    { type: 1, x: 280, y: 450, color: '#60a5fa', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#dbeafe', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "FLOWER",
+                slots: [
+                    { x: 200, y: 245, shape: 3, rot: 0 }, // Center
+                    { x: 200, y: 195, shape: 4, rot: 1 }, // Top petal
+                    { x: 250, y: 245, shape: 4, rot: 2 }, // Right petal
+                    { x: 200, y: 295, shape: 4, rot: 3 }, // Bottom petal
+                    { x: 150, y: 245, shape: 4, rot: 0 }  // Left petal
+                ],
+                pieces: [
+                    { type: 1, x: 50, y: 450, color: '#fcd34d', fold: 0, rot: 0 },
+                    { type: 1, x: 130, y: 450, color: '#f472b6', fold: 0, rot: 0 },
+                    { type: 1, x: 210, y: 450, color: '#c084fc', fold: 0, rot: 0 },
+                    { type: 1, x: 290, y: 450, color: '#fb7185', fold: 0, rot: 0 },
+                    { type: 1, x: 360, y: 450, color: '#f9a8d4', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "HOURGLASS",
+                slots: [
+                    { x: 200, y: 195, shape: 1, rot: 2 }, // Top sand
+                    { x: 200, y: 305, shape: 1, rot: 0 }, // Bottom sand
+                    { x: 200, y: 250, shape: 4, rot: 0 }  // Pinch
+                ],
+                pieces: [
+                    { type: 0, x: 90, y: 450, color: '#fde68a', fold: 0, rot: 0 },
+                    { type: 0, x: 220, y: 450, color: '#facc15', fold: 0, rot: 0 },
+                    { type: 1, x: 340, y: 450, color: '#a16207', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "SWAN",
+                slots: [
+                    { x: 220, y: 285, shape: 0, rot: 0 }, // Body
+                    { x: 155, y: 215, shape: 4, rot: 0 }, // Neck
+                    { x: 155, y: 175, shape: 3, rot: 0 }  // Head
+                ],
+                pieces: [
+                    { type: 0, x: 100, y: 450, color: '#f8fafc', fold: 0, rot: 0 },
+                    { type: 1, x: 220, y: 450, color: '#e2e8f0', fold: 0, rot: 0 },
+                    { type: 1, x: 320, y: 450, color: '#ffd166', fold: 0, rot: 0 }
+                ]
+            },
+            {
+                name: "FORTRESS",
+                slots: [
+                    { x: 200, y: 290, shape: 2, rot: 0 }, // Outer wall
+                    { x: 145, y: 235, shape: 3, rot: 0 }, // Left battlement
+                    { x: 255, y: 235, shape: 3, rot: 0 }, // Right battlement
+                    { x: 200, y: 235, shape: 1, rot: 0 }  // Inner keep
+                ],
+                pieces: [
+                    { type: 0, x: 80, y: 450, color: '#7f5539', fold: 0, rot: 0 },
+                    { type: 1, x: 180, y: 450, color: '#b08968', fold: 0, rot: 0 },
+                    { type: 1, x: 270, y: 450, color: '#ddb892', fold: 0, rot: 0 },
+                    { type: 1, x: 350, y: 450, color: '#e6ccb2', fold: 0, rot: 0 }
+                ]
             }
         ];
+
+        // Per-level offset: each level pulls a fresh, non-overlapping slice of
+        // LEVELS so puzzles never repeat across the whole game.
+        // L1 → 0, L2 → 2, L3 → 5, L4 → 9, L5 → 14. Total used: 20.
+        function getPuzzleOffset(lvl) {
+            let offset = 0;
+            for (let i = 1; i < lvl; i++) offset += (i + 1);
+            return offset;
+        }
+        const puzzleOffset = getPuzzleOffset(currentLevelIndex);
 
         // --- Core Game Logic ---
 
@@ -444,17 +703,18 @@
                 puzzlesCompleted = 0;
                 totalScore = 0;
                 timeLeft = puzzlesRequired * 25000;
-                earnedStars = 3;
-                document.getElementById('star-1').className = 'star earned';
-                document.getElementById('star-2').className = 'star earned';
-                document.getElementById('star-3').className = 'star earned';
-            } else {
-                puzzlesCompleted++;
+                earnedStars = 0;
+                resultPosted = false;
+                // HUD inits to 0 stars per SCORING_GUIDE.md §3 (no flash).
+                document.getElementById('star-1').className = 'star';
+                document.getElementById('star-2').className = 'star';
+                document.getElementById('star-3').className = 'star';
             }
+            // Note: puzzlesCompleted is incremented in checkSnaps on each puzzle win.
 
-            const lvl = LEVELS[puzzlesCompleted % LEVELS.length];
+            const lvl = LEVELS[(puzzleOffset + puzzlesCompleted) % LEVELS.length];
             levelDisplayEl.innerText = puzzlesCompleted + "/" + puzzlesRequired;
-            if (scoreEl) scoreEl.innerText = totalScore;
+            if (scoreEl) scoreEl.innerText = canonicalScore();
 
             slots = lvl.slots.map(s => ({ ...s, isFilled: false }));
             
@@ -542,19 +802,23 @@
 
             // Win Condition
             if (slots.every(s => s.isFilled)) {
-                totalScore += 100;
+                puzzlesCompleted++;
+                totalScore = canonicalScore();
                 if (scoreEl) scoreEl.innerText = totalScore;
-                
-                if (puzzlesCompleted + 1 >= puzzlesRequired) {
+
+                if (puzzlesCompleted >= puzzlesRequired) {
                     gameState = 'GAMEOVER';
                     controlsTray.classList.add('hidden');
-                    
+
+                    // Per MINIGAMES_GUIDE.md §6 Swaddle-gami: strict > thresholds.
                     let finalStars = 1;
-                    if (timeLeft >= 15000) finalStars = 2;
-                    if (timeLeft >= 30000) finalStars = 3;
-                    
-                    document.getElementById('final-score').innerText = "CLEARED!";
+                    if (timeLeft > 15000) finalStars = 2;
+                    if (timeLeft > 30000) finalStars = 3;
+
+                    document.getElementById('final-score').innerText = totalScore;
                     document.getElementById('win-screen').querySelector('h1').innerText = "LEVEL CLEAR!";
+                    winScreen.classList.remove('bg-pink-900/90');
+                    winScreen.classList.add('bg-purple-900/90');
                     
                     const finalStarsContainer = document.getElementById('final-stars-display');
                     if (finalStarsContainer) {
@@ -578,10 +842,13 @@
                             nextLevelBtn.classList.add('hidden');
                         }
                     }
-                    
+
+                    // Win → "Play Again" (replay for a higher star count).
+                    const restartBtn = document.getElementById('restart-btn');
+                    if (restartBtn) restartBtn.innerText = 'Play Again';
+
                     winScreen.classList.remove('hidden');
-                    window.parent.postMessage({ type: 'GAME_OVER', score: totalScore, stars: finalStars }, '*');
-                    totalScore = 0;
+                    postResult(finalStars, 'win');
                 } else {
                     // Instantly load next puzzle
                     initGame(false);
@@ -612,9 +879,9 @@
         }
 
         function drawBunnyMascot() {
-            // Draw bunny head in top right background
+            // Draw bunny head in top left background
             ctx.save();
-            ctx.translate(340, 80);
+            ctx.translate(60, 80);
             
             ctx.fillStyle = '#ff99cc';
             ctx.beginPath(); ctx.arc(0, 0, 25, 0, Math.PI*2); ctx.fill(); // Head
@@ -645,10 +912,12 @@
                 ctx.lineWidth = 2;
                 ctx.beginPath(); ctx.moveTo(-2, 12); ctx.lineTo(4, 11); ctx.stroke();
 
-                // Nose
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 9, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
                 ctx.fillStyle = '#c0392b';
                 ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
-                
+
                 // Question mark bubble
                 ctx.fillStyle = '#ffdf00';
                 ctx.font = '12px "Press Start 2P"';
@@ -662,7 +931,9 @@
                 ctx.beginPath(); ctx.moveTo(-12, 0); ctx.quadraticCurveTo(-8, -5, -4, 0); ctx.stroke();
                 ctx.beginPath(); ctx.moveTo(4, 0); ctx.quadraticCurveTo(8, -5, 12, 0); ctx.stroke();
                 
-                // Nose
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 9, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
                 ctx.fillStyle = '#c0392b';
                 ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
 
@@ -679,7 +950,9 @@
                 ctx.beginPath(); ctx.arc(-8, 0, 3, 0, Math.PI*2); ctx.fill();
                 ctx.beginPath(); ctx.arc(8, 0, 3, 0, Math.PI*2); ctx.fill();
                 
-                // Nose
+                // White snout (muzzle), with the nose sitting at the top of it.
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.ellipse(0, 11, 8, 5.5, 0, 0, Math.PI*2); ctx.fill();
                 ctx.fillStyle = '#c0392b';
                 ctx.beginPath(); ctx.arc(0, 8, 3, 0, Math.PI*2); ctx.fill();
             }
@@ -769,13 +1042,14 @@
 
             if (gameState === 'PLAY') {
                 timeLeft -= dt;
-                
+
                 let displayTime = Math.max(0, timeLeft / 1000).toFixed(1);
                 if (timerEl) timerEl.innerText = displayTime;
-                
-                let currentStars = 1;
-                if (timeLeft >= 15000) currentStars = 2;
-                if (timeLeft >= 30000) currentStars = 3;
+
+                // Live preview stars only meaningful once at least one puzzle solved.
+                let currentStars = puzzlesCompleted > 0 ? 1 : 0;
+                if (puzzlesCompleted > 0 && timeLeft > 15000) currentStars = 2;
+                if (puzzlesCompleted > 0 && timeLeft > 30000) currentStars = 3;
                 if (currentStars !== earnedStars) {
                     earnedStars = currentStars;
                     document.getElementById('star-1').className = earnedStars >= 1 ? 'star earned' : 'star';
@@ -783,14 +1057,20 @@
                     document.getElementById('star-3').className = earnedStars >= 3 ? 'star earned' : 'star';
                 }
 
+                // Keep HUD score reflecting canonical formula live.
+                if (scoreEl) scoreEl.innerText = canonicalScore();
+
                 if (timeLeft <= 0) {
                     timeLeft = 0;
                     gameState = 'GAMEOVER';
                     controlsTray.classList.add('hidden');
-                    
+
+                    const finalScore = canonicalScore();
                     document.getElementById('win-screen').querySelector('h1').innerText = "TIME'S UP!";
-                    document.getElementById('final-score').innerText = "FAILED";
-                    
+                    winScreen.classList.remove('bg-purple-900/90');
+                    winScreen.classList.add('bg-pink-900/90');
+                    document.getElementById('final-score').innerText = finalScore;
+
                     const finalStarsContainer = document.getElementById('final-stars-display');
                     if (finalStarsContainer) {
                         const finalStarSpans = finalStarsContainer.querySelectorAll('.star');
@@ -799,10 +1079,16 @@
                             star.classList.add('empty');
                         });
                     }
-                    
+
+                    const nextLevelBtn = document.getElementById('next-level-btn');
+                    if (nextLevelBtn) nextLevelBtn.classList.add('hidden');
+
+                    // Fail → "Try Again".
+                    const restartBtn = document.getElementById('restart-btn');
+                    if (restartBtn) restartBtn.innerText = 'Try Again';
+
                     winScreen.classList.remove('hidden');
-                    window.parent.postMessage({ type: 'GAME_OVER', score: totalScore, stars: 0 }, '*');
-                    totalScore = 0;
+                    postResult(0, 'fail');
                 }
             }
 
