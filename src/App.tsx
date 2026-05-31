@@ -1618,12 +1618,17 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsStatusOpen(true)}
-                aria-label="Open pet profile"
-                className={`relative w-12 h-12 md:w-14 md:h-14 bg-white/90 backdrop-blur-sm rounded-full shadow-lg flex items-center justify-center transition-all ${
+                aria-label={`Open pet profile, age ${ageInMonths} months`}
+                className={`relative h-12 md:h-14 min-w-fit bg-white/95 backdrop-blur-sm rounded-full shadow-lg flex items-center gap-2.5 pl-2 pr-4 md:pl-2.5 md:pr-5 transition-all ${
                   isStatusOpen ? 'ring-2 ring-[#FF6B6B] scale-105' : 'hover:scale-105 active:scale-95'
                 }`}
               >
-                <User className="w-5 h-5 md:w-6 md:h-6 text-[#FF6B6B]" strokeWidth={2.5} />
+                <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-[#FF6B6B]/15 flex items-center justify-center shrink-0">
+                  <User className="w-4 h-4 md:w-5 md:h-5 text-[#FF6B6B]" strokeWidth={2.5} />
+                </div>
+                <span className="font-black text-base md:text-lg text-zinc-800 tracking-tight whitespace-nowrap leading-none">
+                  Age: <span className="text-[#FF6B6B]">{ageInMonths}</span>
+                </span>
               </button>
 
               {/* Coin Counter */}
