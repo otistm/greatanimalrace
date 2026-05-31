@@ -83,4 +83,4 @@ firebase firestore:indexes
 | `permission-denied` on save | Rules not deployed or schema mismatch (check Console) |
 | Index error in console | Run `npm run firebase:deploy` or create index from error link |
 | RTDB write fails | RTDB not enabled or rules not deployed |
-| Prod build crashes on load | Missing `VITE_FIREBASE_*` in CI/deploy env |
+| Blank screen / Firebase init fails | Run `npm run build` and commit `dist/assets/`; optional: set `VITE_FIREBASE_*` in deploy env (defaults are bundled) |

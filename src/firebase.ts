@@ -36,17 +36,7 @@ function buildFirebaseConfig(): FirebaseOptions {
     appId: import.meta.env.VITE_FIREBASE_APP_ID,
   };
 
-  if (import.meta.env.PROD) {
-    const missing = ENV_KEYS.filter((key) => !import.meta.env[key]);
-    if (missing.length > 0) {
-      throw new Error(
-        `Missing Firebase env vars for production build: ${missing.join(', ')}. See .env.example and FIREBASE.md.`
-      );
-    }
-    return fromEnv;
-  }
-
-  return {
+  const config: FirebaseOptions = {
     apiKey: fromEnv.apiKey || DEV_FALLBACK_CONFIG.apiKey,
     authDomain: fromEnv.authDomain || DEV_FALLBACK_CONFIG.authDomain,
     databaseURL: fromEnv.databaseURL || DEV_FALLBACK_CONFIG.databaseURL,
@@ -55,6 +45,17 @@ function buildFirebaseConfig(): FirebaseOptions {
     messagingSenderId: fromEnv.messagingSenderId || DEV_FALLBACK_CONFIG.messagingSenderId,
     appId: fromEnv.appId || DEV_FALLBACK_CONFIG.appId,
   };
+
+  if (import.meta.env.PROD) {
+    const missing = ENV_KEYS.filter((key) => !import.meta.env[key]);
+    if (missing.length > 0) {
+      console.warn(
+        `[Firebase] Missing env vars (${missing.join(', ')}); using bundled defaults. See .env.example and FIREBASE.md.`
+      );
+    }
+  }
+
+  return config;
 }
 
 export const app = initializeApp(buildFirebaseConfig());
