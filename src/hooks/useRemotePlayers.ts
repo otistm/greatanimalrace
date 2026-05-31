@@ -30,7 +30,6 @@ export function useRemotePlayers(maxVisible = 10) {
 
     const compute = () => {
       const all = latestDataRef.current;
-      console.log('[useRemotePlayers] compute called, presence data:', all);
       if (!all) {
         setPlayers([]);
         return;
@@ -39,17 +38,11 @@ export function useRemotePlayers(maxVisible = 10) {
       const nextPlayers: RemotePlayer[] = [];
 
       for (const [uid, record] of Object.entries(all)) {
-        if (uid === user.uid) continue; // Drop self
-        if (!record || !record.online) {
-          console.log('[useRemotePlayers] dropping explicitly offline uid:', uid);
-          continue;
-        }
-        
+        if (uid === user.uid) continue;
+        if (!record || !record.online) continue;
+
         const lastSeen = typeof record.lastSeen === 'number' ? record.lastSeen : 0;
-        if (now - lastSeen > PRESENCE_STALE_MS) {
-          console.log('[useRemotePlayers] dropping stale uid:', uid, 'lastSeen:', lastSeen, 'age ms:', now - lastSeen);
-          continue;
-        }
+        if (now - lastSeen > PRESENCE_STALE_MS) continue;
 
         const spawn = spawnPositionFor(uid);
 
@@ -62,11 +55,10 @@ export function useRemotePlayers(maxVisible = 10) {
           y: spawn.y,
           z: spawn.z,
           yaw: spawn.yaw,
-          action: 'idle', // Phase 1 is static
+          action: 'idle',
         });
       }
 
-      console.log('[useRemotePlayers] final visible players:', nextPlayers);
       setPlayers(nextPlayers.slice(0, maxVisible));
     };
 
@@ -80,7 +72,6 @@ export function useRemotePlayers(maxVisible = 10) {
       compute();
     });
 
-    // Run a periodic sweep to drop stale players even if no new RTDB updates arrive
     const interval = setInterval(compute, 5000);
 
     return () => {

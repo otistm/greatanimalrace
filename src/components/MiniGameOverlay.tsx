@@ -24,7 +24,6 @@ const GAME_ICONS: Record<string, React.ReactNode> = {
 
 export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, initialGameId, gameProgress = {} }: MiniGameOverlayProps) {
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
-  const [debugMode, setDebugMode] = useState(false);
   const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
   const [prevInitial, setPrevInitial] = useState(initialGameId);
 
@@ -74,26 +73,17 @@ export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, ini
                 </div>
 
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center justify-between mb-4 sm:mb-6 shrink-0">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="p-2 sm:p-3 bg-sky-100 rounded-xl sm:rounded-2xl text-sky-500 shrink-0">
-                        <Gamepad2 className="w-5 h-5 sm:w-6 sm:h-6" />
-                      </div>
-                      <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-zinc-800 truncate">Mini Games</h2>
+                  <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6 shrink-0">
+                    <div className="p-2 sm:p-3 bg-sky-100 rounded-xl sm:rounded-2xl text-sky-500 shrink-0">
+                      <Gamepad2 className="w-5 h-5 sm:w-6 sm:h-6" />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setDebugMode(!debugMode)}
-                      className={`text-[10px] sm:text-xs px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl font-bold transition-colors shrink-0 ml-2 ${debugMode ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
-                    >
-                      DEBUG
-                    </button>
+                    <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-zinc-800 truncate">Mini Games</h2>
                   </div>
 
                   <div className="overflow-y-auto min-h-0 custom-scrollbar flex-1 pr-1 sm:pr-2">
                     <div className="space-y-3 sm:space-y-4 pb-2">
                       {GAMES.map(game => {
-                        const isLocked = !debugMode && ageInMonths < game.unlockMonth;
+                        const isLocked = ageInMonths < game.unlockMonth;
                         return (
                           <button
                             key={game.id}
@@ -163,7 +153,7 @@ export function MiniGameOverlay({ isOpen, onClose, onStartGame, ageInMonths, ini
                         <div className="flex flex-col gap-4">
                           {[1, 2, 3, 4, 5].map(level => {
                             const progress = gameProgress[game.id] || { unlockedLevel: 1, stars: {} };
-                            const isLevelLocked = !debugMode && level > progress.unlockedLevel;
+                            const isLevelLocked = level > progress.unlockedLevel;
                             const stars = progress.stars[level] || 0;
                             
                             return (

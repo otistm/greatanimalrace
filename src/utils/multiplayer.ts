@@ -16,8 +16,8 @@ import { getTerrainHeight } from './terrain';
 //   /presence/{uid} = { online, lastSeen, petName, animalId, equippedCosmetics }
 //   /positions/{uid} = { x, y, z, yaw, action, t }
 //
-// All shape constraints below MUST stay in sync with the security rules
-// pasted into the Firebase Console (see plan file).
+// All shape constraints below MUST stay in sync with
+// [`database.rules.json`](../database.rules.json) in the repo root.
 // ---------------------------------------------------------------------------
 
 export const MAX_CONCURRENT = 10;

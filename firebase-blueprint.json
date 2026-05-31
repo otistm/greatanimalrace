@@ -1,24 +1,57 @@
 {
   "entities": {
-    "LeaderboardEntry": {
-      "title": "LeaderboardEntry",
-      "description": "A score entry for a specific mini-game.",
+    "UserV3": {
+      "title": "UserV3",
+      "description": "Player profile and progression (v3 schema).",
       "type": "object",
       "properties": {
-        "userId": { "type": "string", "description": "Auth UID of the player" },
-        "gameId": { "type": "string", "description": "The ID of the mini game (carrot_catch, bunny_hop, hide_and_seek)" },
-        "score": { "type": "number", "description": "The score achieved" },
-        "playerName": { "type": "string", "description": "Display name of the player" },
-        "animalId": { "type": "string", "description": "The animal played with (bunny, unicorn, etc.)" },
-        "createdAt": { "type": "timestamp", "description": "When the score was achieved" }
+        "selectedAnimalId": { "type": "string" },
+        "petName": { "type": "string" },
+        "progression": {
+          "type": "object",
+          "properties": {
+            "age": { "type": "number" },
+            "xp": { "type": "number" },
+            "coins": { "type": "number" }
+          }
+        },
+        "gameProgress": { "type": "object" },
+        "unlockedCosmetics": { "type": "array", "items": { "type": "string" } },
+        "equippedCosmetics": { "type": "array", "items": { "type": "string" } },
+        "chests": { "type": "array" }
+      }
+    },
+    "LeaderboardEntryV3": {
+      "title": "LeaderboardEntryV3",
+      "description": "Per-game high score and star totals.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "gameId": { "type": "string" },
+        "score": { "type": "number" },
+        "stars": { "type": "number" },
+        "totalStars": { "type": "number" },
+        "playerName": { "type": "string" },
+        "animalId": { "type": "string" },
+        "createdAt": { "type": "timestamp" }
       },
       "required": ["userId", "gameId", "score", "playerName", "animalId", "createdAt"]
     }
   },
   "firestore": {
-    "/leaderboards/{gameId}/entries/{entryId}": {
-      "schema": { "$ref": "#/entities/LeaderboardEntry" },
-      "description": "High scores for a specific mini-game."
+    "/users_v3/{userId}": {
+      "schema": { "$ref": "#/entities/UserV3" },
+      "description": "Player save data."
+    },
+    "/leaderboards_v3/{gameId}/entries/{entryId}": {
+      "schema": { "$ref": "#/entities/LeaderboardEntryV3" },
+      "description": "Mini-game leaderboard entries."
+    },
+    "/chat_world/{messageId}": {
+      "description": "Global world chat (append-only)."
+    },
+    "/chat_dms/{conversationId}": {
+      "description": "Direct message conversation metadata."
     }
   }
 }

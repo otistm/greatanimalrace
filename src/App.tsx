@@ -732,7 +732,7 @@ export default function App() {
         }
       } catch (error) {
         try {
-          handleFirestoreError(error, OperationType.DELETE, `users/${user.uid}`, auth);
+          handleFirestoreError(error, OperationType.DELETE, `users_v3/${user.uid}`, auth);
         } catch (e) {
           console.error(e);
         }
@@ -831,7 +831,7 @@ export default function App() {
             setIsStatusOpen(false);
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`, auth);
+          handleFirestoreError(error, OperationType.GET, `users_v3/${user.uid}`, auth);
         }
       };
       // To prevent overwriting right on load when localStorage conflicts, we load from DB.
@@ -941,7 +941,7 @@ export default function App() {
           }
         } catch (error) {
           try {
-            handleFirestoreError(error, OperationType.WRITE, `leaderboards/${gId}/entries/${user.uid}`, auth);
+            handleFirestoreError(error, OperationType.WRITE, `leaderboards_v3/${gId}/entries/${user.uid}`, auth);
           } catch (e) {
             console.error(e);
           }
@@ -1111,7 +1111,7 @@ export default function App() {
           handleFirestoreError(
             error,
             OperationType.WRITE,
-            `leaderboards/${gameId}/entries/${user.uid}`,
+            `leaderboards_v3/${gameId}/entries/${user.uid}`,
             auth
           );
         }

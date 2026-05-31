@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Shirt as ShirtIcon, Store, Coins, Bug, Crown, Glasses, Wind, LayoutGrid, Sword as SwordIcon } from 'lucide-react';
+import { X, Shirt as ShirtIcon, Store, Coins, Crown, Glasses, LayoutGrid, Sword as SwordIcon } from 'lucide-react';
 import { Cosmetic3DIcon } from './Cosmetic3DIcon';
 import { Canvas } from '@react-three/fiber';
 import { View } from '@react-three/drei';
-import { BASE_COSMETIC_TYPES, COSMETIC_SETS, getCosmeticData, getMilestoneShirtNumber, matchesBaseName, milestoneShirtId, type CosmeticPart, type CosmeticSet } from '../utils/cosmeticsRegistry';
+import { COSMETIC_SETS, getCosmeticData, getMilestoneShirtNumber, matchesBaseName, type CosmeticPart, type CosmeticSet } from '../utils/cosmeticsRegistry';
 
 interface Props {
   isOpen: boolean;
@@ -16,13 +16,6 @@ interface Props {
   coins: number;
   onBuySet: (set: CosmeticSet) => void;
 }
-
-// Debug tab shows every base cosmetic plus a slice of milestone shirts so
-// developers can preview each variant without needing to age the pet up.
-const ALL_COSMETICS = [
-  ...BASE_COSMETIC_TYPES,
-  ...Array.from({ length: 12 }, (_, i) => milestoneShirtId(i + 1)),
-];
 
 // Token-exact color -> CSS swatch mapping. Only the four supported tokens.
 //   Ruby = red, Ocean = blue, Emerald = green, Golden = yellow.
@@ -75,7 +68,7 @@ const CATEGORY_TABS: { id: InventoryCategory; label: string; Icon: React.Compone
 ];
 
 export function CosmeticsOverlay({ isOpen, onClose, cosmetics, equippedCosmetics, onToggleEquip, onSetColor, coins, onBuySet }: Props) {
-  const [activeTab, setActiveTab] = useState<'inventory' | 'shop' | 'debug'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'shop'>('inventory');
   const [activeCategory, setActiveCategory] = useState<InventoryCategory>('all');
 
   // Drop entries we can't render (legacy/migrated names, typos, etc.) so the
@@ -235,15 +228,6 @@ export function CosmeticsOverlay({ isOpen, onClose, cosmetics, equippedCosmetics
                       Shop
                     </div>
                   </button>
-                  <button
-                    onClick={() => setActiveTab('debug')}
-                    className={`px-4 py-2 rounded-xl font-bold text-sm transition-all ${activeTab === 'debug' ? 'bg-white text-pink-500 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Bug className="w-4 h-4" />
-                      Debug
-                    </div>
-                  </button>
                 </div>
                 
                 {activeTab === 'shop' && (
@@ -345,7 +329,7 @@ export function CosmeticsOverlay({ isOpen, onClose, cosmetics, equippedCosmetics
                         </>
                       )}
                     </motion.div>
-                  ) : activeTab === 'shop' ? (
+                  ) : (
                     <motion.div
                       key="shop"
                       initial={{ opacity: 0, x: 20 }}
@@ -401,41 +385,6 @@ export function CosmeticsOverlay({ isOpen, onClose, cosmetics, equippedCosmetics
                               </button>
                             )}
                           </div>
-                        );
-                      })}
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      key="debug"
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 20 }}
-                      transition={{ duration: 0.2 }}
-                      className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-2 h-full content-start"
-                    >
-                      {ALL_COSMETICS.map((cosmetic) => {
-                        const equippedStr = equippedCosmetics?.find(c => matchesBaseName(c, cosmetic));
-                        const isEquipped = !!equippedStr;
-                        const color = extractColor(equippedStr, cosmetic);
-                        const borderClass = isEquipped
-                          ? (color && COLOR_BORDER[color]) || DEFAULT_EQUIPPED_BORDER
-                          : 'border-pink-100 hover:border-pink-200';
-
-                        return (
-                          <button
-                            key={`debug-${cosmetic}`}
-                            onClick={() => onToggleEquip(cosmetic)}
-                            className={`bg-white border-2 rounded-2xl p-4 flex flex-col items-center text-center transition-all duration-200 ease-out outline-none ${borderClass}`}
-                          >
-                            {getCosmeticVisual(cosmetic, isEquipped, equippedStr)}
-                            <span className={`font-bold text-sm capitalize ${isEquipped ? 'text-zinc-800' : 'text-zinc-600'}`}>
-                              {cosmetic.replace(/^(a |some |an )/, '').replace('!', '')}
-                            </span>
-                            <span className={`text-xs mt-1 font-bold ${isEquipped ? 'text-green-500' : 'text-zinc-400'}`}>
-                              {isEquipped ? 'EQUIPPED' : 'Equip'}
-                            </span>
-                            {isEquipped && renderColorSwatches(cosmetic, equippedStr)}
-                          </button>
                         );
                       })}
                     </motion.div>

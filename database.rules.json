@@ -1,0 +1,18 @@
+{
+  "rules": {
+    "presence": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid == $uid",
+        ".validate": "newData.hasChildren(['online', 'lastSeen', 'petName', 'animalId', 'equippedCosmetics']) && newData.child('online').isBoolean() && (newData.child('lastSeen').isNumber() || newData.child('lastSeen').val() === now || newData.child('lastSeen').child('.sv').val() === 'timestamp') && newData.child('petName').isString() && newData.child('petName').val().length >= 1 && newData.child('petName').val().length <= 40 && newData.child('animalId').isString() && newData.child('animalId').val().length >= 1 && newData.child('animalId').val().length <= 40 && newData.child('equippedCosmetics').exists()"
+      }
+    },
+    "positions": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid == $uid",
+        ".validate": "newData.hasChildren(['x', 'y', 'z', 'yaw', 'action', 't']) && newData.child('x').isNumber() && newData.child('y').isNumber() && newData.child('z').isNumber() && newData.child('yaw').isNumber() && newData.child('action').isString() && newData.child('action').val().length <= 32 && newData.child('t').isNumber()"
+      }
+    }
+  }
+}
